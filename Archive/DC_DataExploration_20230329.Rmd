@@ -1,0 +1,1524 @@
+---
+title: "Untitled"
+output: html_document
+date: '2023-03-15'
+editor_options: 
+  chunk_output_type: console
+---
+
+#Package
+
+```{r}
+
+library(DHARMa)
+library(broom.mixed)
+
+```
+
+
+#General 
+
+i) Perhaps the difference in BM shoudl be expressed as % of lighter individual BM instread as in absolute BM
+
+ii) I guess some bits could be moved to data prep but the aim here is to tweak the data to visualize what is going on. Perhaps once it is consolidated and also used for models I can move to dataprep
+
+#CSV 
+
+```{r}
+
+#DC info
+#If brought as csv I need to do all the relabelling and reformatting
+#Usually I won't work with the csv, but in case I have it if R crashes
+DC_Info_F <- read.csv("DC_Info_F_20230329.csv") %>% 
+  
+  #REFORMAT DATE
+  mutate(BirthDate = ymd(BirthDate),
+         IsolationDate = ymd(IsolationDate),
+         PairingDate = ymd(PairingDate)) %>%
+  
+  #RELEVEL FACTOR
+  mutate(Treatment = fct_relevel(Treatment, "Sub", "Queen"),
+         BS_Original = fct_relevel(BS_Original, "Helper", "Breeder"),
+         BS_Original2 = fct_relevel(BS_Original, "Breeder", "Helper"),
+         EvictionStatus = fct_relevel(EvictionStatus, "Evictor", "Evictee", "InGroup"),
+         EvictionStatus2 = fct_relevel(EvictionStatus, "Evictee", "Evictor", "InGroup")) 
+
+names(DC_Info_F)
+  
+
+#Relevant weight
+DC_ClosestWeight <- read.csv("DC_ClosestWeight_20230329.csv")
+names()
+
+
+```
+
+#Data 
+
+The next section could be moved to data prep.
+
+```{r DC}
+
+#Join DC_Info with closest weight
+#So far done for female only 
+DC_Info_ClosestWeight <- DC_Info_F %>% 
+  left_join(., DC_ClosestWeight) %>% 
+  filter(WeightDiff_Type == "Before")
+View(DC_Info_ClosestWeight)
+
+
+
+#Assign a reference for heavier animal at isolation 
+HeavierIsolation <- DC_Info_ClosestWeight%>%
+  filter(DateType == "Isolation") %>%
+  #ADD HEAVIER REF 
+  group_by(ExperimentalGroup) %>% 
+  arrange(desc(Weight)) %>% 
+  mutate(Isolation_HeavierRef = row_number()) %>% 
+  ungroup() %>% 
+  #ARRANGE
+  arrange(ExperimentalGroup, 
+          Isolation_HeavierRef) %>% 
+  distinct(AnimalID,
+           Isolation_HeavierRef)
+View(HeavierIsolation)
+
+
+#Select relevant Date type of weight
+ClosestWeight_Milestone <- DC_Info_ClosestWeight %>% 
+  
+  #RETAIN RELEVANT WEIGHT DATES
+  filter(DateType %in% c("Isolation", "Pairing", "Eviction"), 
+         WeightDiff_Type == "Before") %>% 
+  
+  #ADD HEAVIER REF 
+  left_join(.,HeavierIsolation) %>% 
+  
+  #ADD EVICTION STATUS FOR PLOTTING INGROUP ASSIGN EVICTOR AND EVICTEE
+  mutate(EvictionStatus_Plot = case_when(EvictionStatus == "InGroup" & Isolation_HeavierRef == 1 ~ "Evictor", 
+                                        EvictionStatus == "InGroup" & Isolation_HeavierRef == 2 ~ "Evictee", 
+                                        TRUE ~ as.character(EvictionStatus))) %>% 
+  
+  mutate(EvictionStatus_Plot = fct_relevel(EvictionStatus_Plot, "Evictor", "Evictee")) %>% 
+  
+  #RELEVEL DATE TYPE
+  mutate(DateType = fct_relevel(DateType, "Isolation", "Pairing", "Eviction")) %>% 
+  
+  #ARRANGE
+  #Heavier animal first 
+  arrange(ExperimentalUnit,
+          DateType,
+          desc(Weight))
+names(ClosestWeight_Milestone)
+
+
+
+###################################################DC 
+
+#Count of weigth per experimental group and Date Type
+#Should be = 2
+C_WeightDiff_Count <- ClosestWeight_Milestone %>% 
+       group_by(ExperimentalGroup, 
+                DateType) %>% 
+       mutate(n = n())
+names(C_WeightDiff_Count)
+
+#Not equal to 2
+C_WeightDiff_WrongCount <- C_WeightDiff_Count %>% 
+       filter(n !=2)
+View(C_WeightDiff_WrongCount)
+#All good 2 weights per category
+
+# View(ClosestWeight_Milestone %>% 
+#   filter(AnimalID %in% c ("PF009", "DRF015")))
+
+#Same weight
+SameWeight <- ClosestWeight_Milestone %>% 
+  group_by(ExperimentalGroup,
+           DateType) %>% 
+  mutate(WeightDiff = Weight - lead(Weight)) %>% 
+  filter(WeightDiff == 0)
+View(SameWeight)
+#No weight difference of 0
+#Heavier animals always first 
+
+
+#Min
+#Max
+#Avg 
+#Median 
+#Off day difference for each categor
+
+#Percentage of data that was not collected on the day of isolation, pairing or eviction 
+
+```
+
+Weight diff contains all information from DC_Info_F, with weight difference. It could be moved to data prep
+
+```{r WeightDiff}
+
+WeightDiff <- ClosestWeight_Milestone %>% 
+  
+  #ADD PARTNER WEIGHT INFO
+  left_join(ClosestWeight_Milestone %>% 
+              select(AnimalID, 
+                     DateType,
+                     Weight) %>% 
+              rename(PartnerWeight = Weight), by=c("PartnerID" = "AnimalID", "DateType" = "DateType")) %>% 
+  
+  #ADD WEIGHT DIFF 
+  mutate(WeightDiff = Weight - PartnerWeight) %>% 
+  
+  #ADD HEAVIER CATEGORY 
+  group_by(ExperimentalGroup,
+           DateType) %>% 
+  mutate(WeightDiff_Cat = case_when(WeightDiff > 0 ~ "Heavier",
+                                    WeightDiff == 0 ~ "Same",
+                                    WeightDiff < 0 ~ "Lighter"))
+View(WeightDiff)
+
+```
+
+
+```{r Focal}
+
+#Heavier animal as focal 
+Heavier <- WeightDiff %>% 
+  filter(WeightDiff > 0)
+View(HeavierFocal)
+
+#Lighter animal as focal
+Lighter <- WeightDiff %>% 
+  filter(WeightDiff < 0)
+
+#Remove info of lighter individual at isolation
+HeavierIsol <- WeightDiff  %>% 
+  filter(Isolation_HeavierRef == 1)
+View(HeavierIsol)
+
+#Could add heavier pairing 
+#Could add heavier eviction
+
+#Evictor as focal
+#InGroup have been assigned a status 
+Evictor <- WeightDiff  %>% 
+  filter(EvictionStatus_Plot == "Evictor")
+
+#Evictee as focal
+#InGroup have been assigned a status 
+Evictee <- WeightDiff  %>% 
+  filter(EvictionStatus_Plot == "Evictee")
+
+#Older as focal 
+Older <- WeightDiff  %>% 
+  filter(AgeDiff > 0)
+
+#Younger as focal 
+Younger <- WeightDiff  %>% 
+  filter(AgeDiff < 0)
+
+```
+
+
+
+#Sample size 
+
+10x sub treatment 
+11x queen treatment; 2 queens are lighter and could be excluded from analyses
+
+```{r Treatment} 
+
+SampleSize <- DC_Info %>% 
+  group_by(Treatment) %>% 
+  summarize(SampleSize = n_distinct(ExperimentalGroup)) %>% 
+  ungroup()
+View(SampleSize)
+
+```
+
+
+#Experimental design 
+
+##BM absolute
+
+At isolation body-mass and variance in body-mass is greater in the sub treatment.
+
+For the next round, it would be useful to use heavier BF (>150-160). See BM differences section for further info on BM differences.
+
+In the queen treatment, Queen are relatively heavier than NBF, but we have decided to constrain this by design. 
+
+```{r Summary}
+
+names(ClosestWeight_Milestone )
+
+#Without distinction Sub-Queen 
+BM_Summary <- ClosestWeight_Milestone %>% 
+  group_by(Treatment) %>% 
+  summarize(Min = min(Weight),
+         Max = max(Weight),
+         Median = median(Weight),
+         Avg = mean(Weight),
+         FirstQuartile = quantile(Weight, probs = 0.25),
+         ThirdQuartile = quantile(Weight, probs = 0.75),
+         SD = sd(Weight)) %>% 
+  ungroup()
+View(BM_Summary)
+
+#With Distinction Sub-Queen
+BM_Summary_SubQueen <- ClosestWeight_Milestone %>% 
+  group_by(Treatment, 
+           BS_Original) %>% 
+  summarize(Min = min(Weight),
+         Max = max(Weight),
+         Median = median(Weight),
+         Avg = mean(Weight),
+         FirstQuartile = quantile(Weight, probs = 0.25),
+         ThirdQuartile = quantile(Weight, probs = 0.75)) %>% 
+  ungroup()
+View(BM_Summary_SubQueen)
+         
+
+```
+
+Linear models show no difference in body mass at both idolation and pairing 
+
+```{r LM}
+
+#At isolation 
+#Already moved into analyses (No model validation done yet)
+LM_BMIsol <- lm(Weight ~ Treatment, 
+              data = ClosestWeight_Milestone %>% 
+                filter(DateType == "Isolation"))
+summary(LM_BMIsol)
+
+
+#At pairing
+#Already moved into analyses (No model validation done yet)
+LM_BMPairing <- lm(lm(Weight ~ Treatment, 
+              data = ClosestWeight_Milestone %>% 
+                filter(DateType == "Pairing"))) 
+summary(LM_BMPairing)
+
+#Are queen heavier than sub from both treatment
+LM_BMIsol_QueenSub <- lm(lm(Weight ~ BS_Original, 
+              data = ClosestWeight_Milestone %>% 
+                filter(DateType == "Isolation"))) 
+summary(LM_BMIsol_QueenSub)
+
+
+#Are queen heavier than sub from queen treatment 
+LM_BMPairing_QueenSub <- lm(lm(Weight ~ BS_Original, 
+              data = ClosestWeight_Milestone %>% 
+                filter(DateType == "Pairing"))) 
+summary(LM_BMPairing_QueenSub)
+
+
+#Are queen heavier than sub from both treatment
+LM_BMIsol_QueenSub_QT <- lm(lm(Weight ~ BS_Original, 
+              data = ClosestWeight_Milestone %>% 
+                filter(DateType == "Isolation",
+                       Treatment == "Queen"))) 
+summary(LM_BMIsol_QueenSub_QT)
+
+
+#Are queen heavier than sub from queen treatment 
+LM_BMPairing_QueenSub_QT <- lm(lm(Weight ~ BS_Original, 
+              data = ClosestWeight_Milestone %>% 
+                filter(DateType == "Pairing",
+                       Treatment == "Queen"))) 
+summary(LM_BMPairing_QueenSub_QT)
+
+```
+
+
+```{r Plot}
+
+#By treatment
+ggplot(ClosestWeight_Milestone %>% 
+         filter(DateType == "Isolation"),
+       aes(x=Treatment,y=Weight)) + 
+  
+  #ADD BOXPLOT
+  geom_boxplot(outlier.shape = NA) +
+  
+  #ADD POINTS 
+  geom_jitter(width = 0.3, height = 0, size = 2.5, aes(col = BS_Original)) +
+
+  theme_classic()
+
+#Plot separating sub_Q and Queen 
+ggplot(ClosestWeight_Milestone  %>% 
+         filter(DateType == "Isolation"),
+       aes(x=PlotCategory,y=Weight)) + 
+  
+  #ADD BOXPLOT
+  geom_boxplot(outlier.shape = NA) +
+  
+  #ADD POINTS 
+  geom_jitter(width = 0.3, height = 0, size = 2.5) +
+
+  theme_classic()
+
+```
+
+##BM Differences
+
+At the start of the experiment, differences in body mass between the heavier animals and the lighter animals are greater in the sub treatment. Also variance in differences in BM is greater in the sub treatment that in the queen treatment. 
+
+For the next round 
+
+In the queen treatment:
+Use queens that are as heavy as possible (> 160g) with BM difference > 20g
+
+In the sub treatment:
+Use Have a few sub with small BM difference (about 10g)
+
+In the queen treatment, queens were heavier than subordinate in all but two experimental pair:
+i) Chouffe: NBF was 3 grams heavier 
+ii) BitBurger: NBF was 8 grams heavier
+
+These two groups could be removed from analyses, which would bring the sample size to 9 instead of 11. In doing so, we would also minimize differences in BM and differences in BM across treatments 
+
+```{r Summary}
+
+BMdiff_Summary <- HeavierIsol %>% 
+  filter(DateType == "Isolation") %>% 
+  group_by(Treatment) %>% 
+  summarize(Min = min(WeightDiff),
+         Max = max(WeightDiff),
+         Median = median(WeightDiff),
+         Avg = mean(WeightDiff),
+         FirstQuartile = quantile(WeightDiff, probs = 0.25),
+         ThirdQuartile = quantile(WeightDiff, probs = 0.75),
+         SD = sd(WeightDiff)) %>% 
+  ungroup()
+View(BMdiff_Summary)
+
+```
+
+
+```{r Details}
+
+#Sub heavier than queen at isolation 
+View(HeavierIsol %>% 
+       filter(Treatment == "Queen",
+              HeavierRef == 1, 
+              BS_Original == "Helper"))
+```
+
+```{r Models}
+
+View(WeightDiff)
+
+#At isolation 
+#Will this be changed after the addition of the last round?
+LM_BMDiff_Isol <- lm(WeightDiff ~ Treatment, 
+              data = WeightDiff %>% 
+                filter(DateType == "Isolation",
+                       WeightDiff_Cat == "Heavier"))
+summary(LM_BMDiff_Isol)
+
+#At pairing
+LM_BMDiff_Pairing <- lm(WeightDiff ~ Treatment, 
+              data = WeightDiff %>% 
+                filter(DateType == "Pairing",
+                       WeightDiff_Cat == "Heavier"))
+summary(LM_BMDiff_Pairing)
+
+```
+
+```{r Plot}
+
+#Heavier as focal 
+ggplot(HeavierFocal %>% 
+         filter(DateType == "Isolation"),
+       aes(x=Treatment,y=WeightDiff)) + 
+  
+  #ADD BOXPLOT
+  geom_boxplot(outlier.shape = NA) +
+  
+  #ADD POINTS 
+  geom_jitter(width = 0.3, height = 0, size = 2.5, aes(col=BS_Original)) +
+
+  theme_classic()
+
+
+```
+
+## Age absolute
+
+Females from the queen treatment are on average 3 times older than females from the sub treatment. This is due to queens being much older than sub.
+
+For the next round:
+
+Queen treatment: 
+i) Use younger queen and older sub. That will also contribute to lower age difference 
+
+Sub treatment 
+ii) Use subordinate that are 5.5 years at least. 
+
+```{r Summary}
+names(DC_Info)
+
+#Age summary 
+Age_Summary <- DC_Info_F %>% 
+  
+  #SUMMARY
+  group_by(Treatment) %>% 
+  summarize(Min = min(Age),
+         Max = max(Age),
+         Median = median(Age),
+         Avg = mean(Age),
+         FirstQuartile = quantile(Age, probs = 0.25),
+         ThirdQuartile = quantile(Age, probs = 0.75),
+         SD = sd(Age)) %>% 
+  ungroup()
+View(Age_Summary)
+
+
+#Age summary, separating queen and sub in queen treatment
+Age_SubQueen_Summary <- DC_Info_F %>% 
+  #AGE AT ISOL
+  mutate(Age = IsolationDate - BirthDate) %>% 
+  
+  #SUMMARY
+  group_by(Treatment,
+           BS_Original) %>% 
+  summarize(Min = min(Age),
+         Max = max(Age),
+         Median = median(Age),
+         Avg = mean(Age),
+         FirstQuartile = quantile(Age, probs = 0.25),
+         ThirdQuartile = quantile(Age, probs = 0.75),
+         SD = sd(Age)) %>% 
+  ungroup()
+View(Age_SubQueen_Summary)
+
+```
+
+```{r Models}
+
+
+LM_Age <- lm(as.integer(Age) ~ Treatment, 
+              data = DC_Info_F)
+summary(LM_AgeDiff)
+
+
+```
+
+
+```{r Plot}
+
+#By treatment
+ggplot(DC_Info_F,
+       aes(x=Treatment,y=Age)) + 
+  
+  #ADD BOXPLOT
+  geom_boxplot(outlier.shape = NA) +
+  
+  #ADD POINTS 
+  geom_jitter(width = 0.3, height = 0, size = 2.5, aes(col = BS_Original)) +
+
+  theme_classic()
+
+
+#By treatment, separating queen and 
+ggplot(DC_Info_F,
+       aes(x=Treatment,y=Age)) + 
+  
+  #ADD BOXPLOT
+  geom_boxplot(outlier.shape = NA) +
+  
+  #ADD POINTS 
+  geom_jitter(width = 0.3, height = 0, size = 2.5, aes(col = BS_Original)) +
+
+  theme_classic()
+
+names(DC_Info_F)
+
+#By treatment + separating sub_Q and Queen 
+ggplot(DC_Info_F,
+       aes(x=PlotCategory,y=Age/365)) + 
+  
+  #ADD BOXPLOT
+  geom_boxplot(outlier.shape = NA) +
+  
+  #ADD POINTS 
+  geom_jitter(width = 0.3, height = 0, size = 2.5) +
+
+  theme_classic()
+
+
+
+
+
+```
+
+
+## Age difference
+
+The average age difference between females is 300 days in the sub treatment and over 3 years in the Queen treatment 
+
+For the next round 
+
+Queen treatment:
+i) Minimize age difference 
+ii) Use younger queen and older sub
+
+Sub treatment: 
+i) Maximize age difference (should try to have difference of at least 1200 days)
+ii) Use one very old sub within the pair 
+
+```{r Summary}
+
+AgeDiff_Summary <- OlderFocal %>% 
+
+  #SUMMARY
+  group_by(Treatment) %>% 
+  summarize(Min = min(AgeDiff),
+         Max = max(AgeDiff),
+         Median = median(AgeDiff),
+         Avg = mean(AgeDiff),
+         FirstQuartile = quantile(AgeDiff, probs = 0.25),
+         ThirdQuartile = quantile(AgeDiff, probs = 0.75),
+         SD = sd(AgeDiff)) %>% 
+  ungroup()
+View(AgeDiff_Summary)
+
+
+```
+
+```{r Model}
+
+View(DC_Info_F)
+
+LM_AgeDiff <- lm(as.integer(AgeDiff) ~ Treatment, 
+              data = DC_Info_F %>% 
+                filter(AgeDiff_Cat == "Older"))
+summary(LM_AgeDiff)
+
+```
+
+```{r Plot}
+
+ggplot(OlderFocal,
+       aes(x=Treatment,y=AgeDiff)) + 
+  
+  #ADD BOXPLOT
+  geom_boxplot(outlier.shape = NA) +
+  
+  #ADD POINTS 
+  geom_jitter(width = 0.3, height = 0, size = 2.5, aes(col=BS_Original)) +
+
+  theme_classic()
+
+```
+
+##Correlation BM and Age Diff 
+
+```{r Data}
+
+#Prepare data 
+#Center difference in Age, Note that this won't affect the slopes estimates. So it is not absolutely necessary, but makes Treatment ieffect interpretatble
+BMDiff_LMdata <- WeightDiff %>% 
+  filter(WeightDiff_Cat == "Heavier") %>% 
+  group_by(Treatment,
+           DateType) %>% 
+  mutate(CentredBM = WeightDiff - mean(WeightDiff),
+         CentredAgeDiff = AgeDiff - mean(AgeDiff)) %>% 
+  ungroup()
+
+```
+
+
+```{r Model}
+
+#All data
+LM_BMAgeDiff <- lm(WeightDiff ~ CentredAgeDiff * Treatment, 
+                   data = BMDiff_LMdata  %>% 
+                     filter(DateType == "Isolation"))
+summary(LM_BMAgeDiff)
+
+
+#Sub treatment
+LM_BMAgeDiff_ST <- lm(WeightDiff ~ CentredAgeDiff, 
+                   data = BMDiff_LMdata %>% 
+                     filter(DateType == "Isolation",
+                            Treatment == "Sub"))
+summary(LM_BMAgeDiff_ST)
+#No correlation 
+
+
+#Queen treatment 
+LM_BMAgeDiff_QT <- lm(WeightDiff ~ CentredAgeDiff, 
+                   data = BMDiff_LMdata %>% 
+                     filter(DateType == "Isolation",
+                            Treatment == "Queen"))
+summary(LM_BMAgeDiff_QT)
+#No correlation 
+
+```
+
+```{r}
+
+
+#All data
+LM_BMAgeDiff <- lm(WeightDiff ~ CentredAgeDiff * Treatment, 
+                   data = BMDiff_LMdata  %>% 
+                     filter(DateType == "Isolation"))
+summary(LM_BMAgeDiff)
+
+
+#Sub treatment
+LM_BMAgeDiff_ST <- lm(WeightDiff ~ CentredAgeDiff, 
+                   data = BMDiff_LMdata %>% 
+                     filter(DateType == "Isolation",
+                            Treatment == "Sub"))
+summary(LM_BMAgeDiff_ST)
+#No correlation 
+
+
+#Queen treatment 
+LM_BMAgeDiff_QT <- lm(WeightDiff ~ CentredAgeDiff, 
+                   data = BMDiff_LMdata %>% 
+                     filter(DateType == "Isolation",
+                            Treatment == "Queen"))
+summary(LM_BMAgeDiff_QT)
+#Strong correlation 
+
+
+
+```
+
+```{r Plot}
+#Older as reference 
+
+#Correlation by breeding status
+#Though there is no significant effect of breeding status  
+ggplot(Older %>% filter(DateType == "Isolation"), aes(x = AgeDiff, y = WeightDiff, color = Treatment)) +
+  
+  #facet_grid(~DateType) +
+  geom_hline(yintercept = 0) +
+  
+  geom_point(aes(shape = BS_Original)) + 
+  
+  geom_smooth(method = "lm") +
+  
+  theme_classic() +
+  
+  theme(legend.position = "none")
+
+```
+
+
+#Eviction
+
+Eviction occurred in all but one group from the sub treatment (DevilsPeak, DOS = 18/07/2022) and in all but two group from the queen treatment (Tusker, DOS = 18/01/2022; WicklowWolf = 02/03/2023).
+
+It is worth noticing (see later plots) that groups where there is no eviction are characterized by relatively larger BM and Age difference 
+
+## Occurence
+```{r No eviction}
+
+#Groups without eviction
+View(DC_Info_F %>% 
+       filter(EvictionStatus == "InGroup"))
+
+```
+
+
+## Timing 
+
+### Eviction delay
+
+```{r Summary}
+
+
+#Eviction delay
+EvictionDelay_Summary <- DC_Info %>% 
+  group_by(Treatment) %>% 
+  summarize(Min = min(EvictionPairingDayDiff, na.rm = T),
+         Max = max(EvictionPairingDayDiff, na.rm = T),
+         Median = median(EvictionPairingDayDiff, na.rm = T),
+         Avg = mean(EvictionPairingDayDiff, na.rm = T),
+         FirstQuartile = quantile(EvictionPairingDayDiff, probs = 0.25, na.rm = T),
+         ThirdQuartile = quantile(EvictionPairingDayDiff, probs = 0.75, na.rm = T),
+         SD = sd(EvictionPairingDayDiff, na.rm = T))
+View(EvictionDelay_Summary)
+
+#All evictions occured within 21 days except in 4 groups 
+#All groups where evictions occurred after 21 days are from the queen treatment 
+
+#Isolation delay
+#Must be added in DC_Info
+# IsolationDelay_Summary <- DC_Info_F %>% 
+#   group_by(Treatment) %>% 
+#   summarize(Min = min(IsolationPeriod),
+#          Max = max(IsolationPeriod),
+#          Median = median(IsolationPeriod),
+#          Avg = mean(IsolationPeriod),
+#          FirstQuartile = quantile(IsolationPeriod, probs = 0.25),
+#          ThirdQuartile = quantile(IsolationPeriod, probs = 0.75),
+#          SD = sd(IsolationPeriod))
+# View(IsolationDelay_Summary)
+
+#Conception delay
+# View(DC_Info_Group %>% 
+#        select(ExperimentalGroup,
+#               Treatment,
+#               PairingDate,
+#               ConceptionDelay) %>% 
+#        arrange(Treatment,
+#                ConceptionDelay))
+
+```
+
+
+```{r Model function}
+
+
+#Lm 
+evictiondelay_lm <- function(df) {
+  glmmTMB( EvictionPairingDayDiff ~ Treatment, data = df)
+}
+
+
+#Poisson
+evictiondelay_poiss <- function(df) {
+  glmmTMB(EvictionPairingDayDiff ~ Treatment, family = poisson, data = df)
+}
+
+#Generalized poisson
+evictiondelay_genpoiss <- function(df) {
+  glmmTMB(EvictionPairingDayDiff ~ Treatment, family = genpois, data = df)
+}
+#Not tried yet
+
+#Gamma models
+evictiondelay_gamma <- function(df) {
+  glmmTMB(EvictionPairingDayDiff ~ Treatment, family = "Gamma", data = df)
+}
+
+#Gamma models
+evictiondelay_gammalog <- function(df) {
+  glmmTMB(EvictionPairingDayDiff ~ Treatment, family = Gamma(link="log"), data = df)
+}
+
+#Not tried yet
+#Negative binomial 1
+evictiondelay_nb1 <- function(df) {
+  glmmTMB(EvictionPairingDayDiff ~ Treatment, family = nbinom1, data = df)
+}
+
+#Negative binomial 2
+evictiondelay_nb2 <- function(df) {
+  glmmTMB(EvictionPairingDayDiff ~ Treatment, family = nbinom2, data = df)
+}
+
+evictiondelay_tweedie <- function(df) {
+  glmmTMB(EvictionPairingDayDiff ~ Treatment, data = df, family = "tweedie")
+}
+
+#Does not work, I ma not sure why. Perhaps because there is no random effect? 
+evictiondelay_tweedieD <- function(df) {
+  glmmTMB(EvictionPairingDayDiff ~ Treatment, data = df, dispformula = ~Treatment, family = tweedie)
+}
+
+
+
+```
+
+```{r Model dataset}
+
+#Nested dataset
+EvictionDelay_Nested <- DC_Info_Group %>% 
+  select(ExperimentalGroup,
+         Treatment,
+         EvictionPairingDayDiff) %>% 
+  mutate(EvictionPairingDayDiff = as.integer(EvictionPairingDayDiff)) %>% 
+  nest()
+View(EvictionDelay)
+
+```
+
+
+
+```{r Run Model}
+
+EvictionDelay_Models_Wide <- EvictionDelay_Nested %>%
+  
+  #RUN MODEL OVER EACH ROWS
+  #How could I automate this in one line of code 
+  #To learn
+  mutate(LM = map(data, evictiondelay_lm),
+         P = map(data, evictiondelay_poiss),
+         GP = map(data, evictiondelay_genpoiss),
+         G = map(data, evictiondelay_gamma),
+         GLog = map(data,evictiondelay_gammalog),
+         NB1 = map(data, evictiondelay_nb1),
+         NB2 = map(data, evictiondelay_nb2),
+         Tw = map(data, evictiondelay_tweedie),
+         TwD = map(data, evictiondelay_tweedieD))
+
+
+#Long format
+EvictionDelay_Models <- EvictionDelay_Models_Wide %>% 
+  
+  pivot_longer(cols = LM:TwD, names_to = "ModelType", values_to = "Model")
+
+View(EvictionDelay_Models)
+
+```
+
+```{r MOdel info}
+
+
+#Model info 
+#Treatment to be used in predict function
+pdata <- data.frame(Treatment = c("Sub", "Queen"))
+
+
+#Put all model info together
+EvictionDelay_Models_Info <- EvictionDelay_Models %>%
+  
+  #MODEL INFO 
+  #Returned as list 
+  mutate(Info = purrr::map(Model, ~family(.x))) %>% 
+  
+  #ADD FAMILY
+  mutate(Family = purrr::map(Info, ~ pluck(.x$family))) %>% 
+  
+  #ADD LINK 
+  mutate(Link = purrr::map(Info, ~ pluck(.x$link))) %>% 
+  
+  #ADD LINK INVERSE 
+  mutate(LinkInv = purrr::map(Info, ~ pluck(.x$linkinv))) %>% 
+  
+  #ADD AIC 
+  mutate(AIC = purrr::map_dbl(Model,~AIC(.x))) %>% 
+  
+  #ADD SIMULATED RESIDUALS
+  mutate(SimResid = map(Model, ~simulateResiduals(fittedModel = .x, plot = F))) %>% 
+  
+  # #GGPREDICT 
+  # mutate(Effect = map(Model, ~ Effect(mod = .x, term = "Treatment"))) %>% 
+  # 
+    #ADD MODEL PREDICTION
+  mutate(Predict = map(Model, ~ predict(.x, newdata = pdata, type = "link", se.fit = TRUE))) %>% 
+  
+  #ADD MODEL PREDICTION
+  mutate(Predict_R = map(Model, ~ predict(.x, newdata = pdata, type = "response", se.fit = TRUE))) 
+View(EvictionDelay_Models_Info)
+
+```
+
+```{r Model output}
+
+#EffectSize
+EvictionDelay_ModelOutput_Link <- EvictionDelay_Models_Info %>% 
+  
+  #ADD COEFF
+  mutate(Coeff = map(Model, ~tidy(.x))) %>%
+  
+  #UNNEST MODEL COEFF 
+  unnest(Coeff) %>% 
+
+  #ADD CI
+  #The std.error are the std.error of the contrast, not of the predicted values, except for the intercept (because the intercept is the predicted value in relation to which the contrasts are expressed)
+  mutate(Lower = estimate - (1.96*std.error),
+         Upper = estimate + (1.96*std.error)) %>% 
+  
+  mutate_if(is.numeric, round, 5) %>% 
+  
+  #SELECT 
+  select(
+         ModelType,
+         term,
+         estimate,
+         std.error,
+         statistic,
+         p.value,
+         Lower,
+         Upper)
+  
+View(EvictionDelay_ModelOutput_Link)
+
+
+```
+
+```{r Best models}
+#Based on AIC 
+#All 3 give warning 
+#would need to ask Jacky what they mena and what shoudl be chosen
+
+
+#There are 3 models with AIC of 141
+#Glog
+#G
+#Tweedie Dispersion
+
+
+#GLog 
+Model_ValidationPlot_GLog <-  EvictionDelay_Models_Info %>% 
+  select(
+         ModelType,
+         SimResid) %>% 
+  
+  filter(ModelType == "GLog") %>% 
+  
+  #PLOT MODEL 
+  mutate(ModelPlot = purrr::map(SimResid, ~plot(.x))) 
+
+
+#Gamma
+Model_ValidationPlot_G <-  EvictionDelay_Models_Info %>% 
+  select(ModelType,
+         SimResid) %>% 
+  
+  filter(ModelType == "G") %>% 
+  
+  #PLOT MODEL 
+  mutate(ModelPlot = purrr::map(SimResid, ~plot(.x))) 
+
+#Tweedie dispersion 
+Model_ValidationPlot_G <-  EvictionDelay_Models_Info %>% 
+  select(ModelType,
+         SimResid) %>% 
+  
+  filter(ModelType == "TwD") %>% 
+  
+  #PLOT MODEL 
+  mutate(ModelPlot = purrr::map(SimResid, ~plot(.x))) 
+
+
+```
+
+
+```{r Plot}
+
+#Data
+EvictionDelay <- DC_Info_Group %>% 
+  left_join(.,DC_Info_F %>% 
+              filter(EvictionStatus == "Evictor") %>% 
+              select(ExperimentalGroup, 
+                     BS_Original))
+
+View(EvictionDelay)
+
+#Plot
+#Remove group without eviction
+ggplot(EvictionDelay %>% 
+         filter(!is.na(BS_Original)),
+       aes(x=Treatment,y=as.integer(EvictionPairingDayDiff))) + 
+  
+  #ADD BOXPLOT
+  geom_boxplot(outlier.shape = NA) +
+  
+  #ADD POINTS 
+  geom_jitter(width = 0.3, height = 0, size = 2.5, aes(col = BS_Original)) +
+
+  theme_classic()
+
+```
+
+###Eviction trigger 
+
+Is eviction triggered by activation, pregnancies or parturition of Evictor? Evictee? Both? 
+
+Activation will be determined through hormone analyses and can for now only be backtracked for animal that successfully gave birth.  
+
+Pregnancies can be determined through LH, but hormone analyses could point detect undetected pregnancies .
+
+
+4 females that were evicted produced a litter (Licher, Corbeau, Black Label, Guiness).
+
+Corbeau (129 days) and Guiness (12 days) gave birth before they were evicted.   
+
+Licher (43 days) and Black label (23 days) gave birth after they were evicted. Thus both were pregnant at the time of eviction
+
+
+```{r}
+
+names(DC_Info)
+
+#Evicted females that gave birth 
+Parturition_Evictee <- DC_Info %>% 
+  filter(EvictionStatus == "Evictee" & !is.na(FirstParturitionDate))
+View(Parturition_Evictee)
+
+#Evicted female that gave birth before eviction 
+Parturition_Evictee_Before <- Parturition_Evictee %>% 
+  filter(EvictionDate > FirstParturitionDate)
+View(Parturition_Evictee_Before)
+
+
+#Evicted females that gave birth after eviction
+Parturition_Evictee_After <- Parturition_Evictee %>% 
+  filter(EvictionDate < FirstParturitionDate)
+View(Parturition_Evictee_After)
+
+```
+
+
+
+#Relationship BM and Age
+
+We had decided to constrain queen (which are also older) to be heavier. Thus in the queen treatment, Age and BM will be confounded. Perhaps, it would be good to add 4 queens that are lighter than sub?
+
+Are age and BM confounded?
+
+##Absolute
+
+At the individual level, it does not seem. But what is most relevant is to have a look at:
+i)queen treatment where queens are consistently older but also heavier by design => we would need queen lighter than sub
+
+ii) sub treatment: Are heavier animals consistently older 
+
+```{r Corvif}
+
+```
+
+```{r Plot}
+
+#Correlation by breeding status 
+#Points may be pulled by extreme points
+ggplot(ClosestWeight_Milestone, aes(x = Age, y = Weight, color = BS_Original)) +
+                           geom_point() + 
+  geom_smooth(method = "lm")
+
+
+#Correlation by breeding status and treatment 
+#Points may be pulled by extreme points
+ggplot(ClosestWeight_Milestone, aes(x = Age, y = Weight, color = PlotCategory)) +
+                           geom_point() + 
+  geom_smooth(method = "lm")
+
+
+#Boxplot
+ggplot(ClosestWeight_Milestone,
+       aes(x=PlotCategory,y=Age/365)) + 
+  
+  #ADD BOXPLOT
+  geom_boxplot(outlier.shape = NA) +
+  
+  #ADD POINTS 
+  geom_jitter(width = 0.3, height = 0, size = 3, alpha = 0.8, aes(col = Weight)) +
+
+  theme_classic()
+
+
+```
+
+
+#Relationship BM, Original BS and eviction
+
+In the sub treatment, differences in body-mass are pretty consistent throughout the experiment. 
+
+The heavier sub at isolation evicted the lighter sub in all but 2 groups (8/10).
+i) Lighter animals (CUF031) evicted heavier (CUF012) in Trolls
+ii) No eviction in Devils peak where DVF061 is >35g heavier than DVF048 
+
+In the Queen treatment, differences in body-mass are pretty consistent throughout the experiment, though variance seems to increase
+
+In contrast to the sub treatment, heavier females are consistently evicting lighter ones. In fact only 4/11 females that were heavier at isolation evicted, including the two sub that were heavier than the queen (Chouffe and BitBurger). 5/11 females, all queens, that were heavier at isolation and pairing (3/5 at eviction) were evicted by the lighter sub. 2/11 groups where the queen was heavier than then sub have had no eviction.  
+
+Overall this highlight a different relationship between BM difference and likelihood of eviction in the Sub and the queen treatment. This is because despite being heavier, queen are more likely to be evicted than sub. Out of the 9 cases where there was eviction, the queen evicted 2x only and was evicted 7 times (2x it was lighter). 4 evicted queens were lighter than the sub at eviction (2 at isolation) whereas 3 were heavier (5 at isolation). That shows that among the 7 queens that were evicted, two did not maintain their BM advantage. 
+
+Overall, it doesn't seem that the animals that evict have been gaining more BM throughout the experiment, relative to the evictor (sometimes the BM difference ecame more positive, sometimes more negative)
+
+It is worth noticing that the three groups where there has been no eviction (Sub: DevilsPeak, DOS = 18/07/2022; Queen: Tusker, DOS = 18/01/2022; WicklowWolf = 02/03/2023) are characterized by the largest group difference (no competition?)
+
+```{r Summary}
+
+#SummaryTable Wide
+SummaryTable_BMBS <- BM_EvictorFocal %>% 
+   filter(EvictionStatus != "InGroup") %>% 
+   group_by(DateType,
+            Treatment,
+            BS_Original) %>% 
+   summarize(Heavier = sum(WeightDiff > 0),
+          Lower = sum(WeightDiff <0)) %>% 
+   ungroup()
+View(SummaryTable_BMBS)
+ 
+
+#Summary Long format
+SummaryTable_BMBS_Long <- SummaryTable_BMBS %>% 
+   pivot_longer(cols = Heavier:Lower,names_to = "BM",values_to = "Count")
+View(SummaryTable_BMBS_Long)
+ 
+
+#Plot 
+ggplot(SummaryTable_BMBS_Long,
+   aes(x = BS_Original, y = Count, fill = BM)) +
+  facet_grid(DateType ~ Treatment) +
+  geom_col(position = "stack")
+
+```
+
+
+```{r Details}
+
+#No eviction 
+View(EvictorFocal %>% 
+       filter( EvictionStatus== "InGroup"))
+#WicklowWolf in Q treatment
+#Tusker in Q treatment 
+#DevilsPeak in Sub treatment
+
+
+#Lighter sub that evicted heavier sub
+View(EvictorFocal %>% 
+       filter(Treatment == "Sub",
+              EvictionStatus != "Evictee",
+              HeavierRef == 2))
+View(EvictorFocal)
+#1/10 CUF031 evicted CUF012 in Trolls
+
+
+#Lighter sub at isolation that evicted heavier queen
+View(EvictorFocal %>% 
+       filter(Treatment == "Queen",
+              BS_Original == "Helper",
+              EvictionStatus == "Evictor",
+              DateType == "Isolation",
+              HeavierRef == 2))
+#5 sub evicted queens that were lighter 
+
+
+#Lighter sub at eviction that evicted heavier queen 
+View(EvictorFocal %>% 
+       filter(Treatment == "Queen",
+              BS_Original == "Helper",
+              EvictionStatus == "Evictor",
+              DateType == "Eviction",
+              WeightDiff <= 0))
+#Licher
+#Black Label 
+#Corbeau 
+
+```
+
+
+##Focal heavier
+
+In the queen treatment 3 evictee (4 until pairing) are heavier and all of these individuals are queens
+
+
+```{r Plot}
+
+#Heavier as focal 
+ggplot(HeavierIsol,
+       aes(x=DateType,y=WeightDiff)) + 
+  
+  facet_wrap(~ Treatment) +
+  
+  #ADD BOXPLOT
+  geom_boxplot(outlier.shape = NA) +
+  
+  #ADD POINTS 
+  geom_jitter(width = 0.2, height = 0, size = 2.5, aes(col=EvictionStatus, shape = BS_Original)) +
+  #geom_point(size = 2, alpha = 0.7, aes(col=EvictionStatus, shape = BS_Original)) +
+  
+  geom_line(aes(group = AnimalID), alpha = 0.5) +
+  
+  geom_hline(yintercept = 0) +
+
+  theme_classic()
+
+
+```
+
+## Focal evictor
+
+```{r Plot}
+
+#Heavier as focal 
+ggplot(EvictorFocal,
+       aes(x=DateType,y=WeightDiff)) + 
+  
+  facet_wrap(~ Treatment) +
+  
+  #ADD BOXPLOT
+  geom_boxplot(outlier.shape = NA) +
+  
+  #ADD POINTS 
+  geom_jitter(width = 0.1, height = 0, size = 2.5, aes(col=BS_Original, shape = EvictionStatus)) +
+  #geom_point(size = 2, alpha = 0.7, aes(col=EvictionStatus, shape = BS_Original)) +
+  
+  geom_line(aes(group = AnimalID), alpha = 0.5) +
+  
+  geom_hline(yintercept = 0) +
+
+  theme_classic()
+
+
+```
+
+```{r Comparisons}
+
+ggplot(ClosestWeight_Milestone,
+       aes(x=EvictionStatus_Plot,y=Weight)) + 
+  
+  facet_grid(DateType ~ Treatment) +
+  
+  #ADD BOXPLOT
+  geom_boxplot(outlier.shape = NA) +
+  
+  #ADD POINTS 
+  geom_jitter(width = 0.1, height = 0, size = 2.5, aes(col=BS_Original, shape = EvictionStatus)) +
+  #geom_point(size = 2, alpha = 0.7, aes(col=EvictionStatus, shape = BS_Original)) +
+  
+  geom_line(aes(group = ExperimentalGroup), alpha = 0.5) +
+  
+  geom_hline(yintercept = 0) +
+  
+  ylim(90,200)+
+
+  theme_classic()
+
+
+```
+
+
+
+##For Loop
+I can try to replicate body mass of both females in the pair throughout the experiment for each experimental unit. It will be useful to see which of the body-mass are asscoiated with pregnancies (this would affect the difference in body mass between the two individuals)
+
+The figure should show:
+
+Vertical lines:
+- Isolation
+- Pairing
+- Eviction 
+- First parturition (of both animals? only one)
+
+LineType:
+- Original BS 
+
+Colour:
+- Final eviction status
+
+This has been started but not finished. At this stage, I think it is unecessary
+
+```{r DataPrep}
+
+#I will use isolation day as the reference 
+
+
+#Join DC_Info with weight 
+Plot_BM <- DC_Info %>%
+  
+  #RETAIN FEMALES
+  filter(Sex == "F") %>% 
+  
+  #ADD WEIGHT
+  left_join(.,DC_Weight) %>% 
+  
+  #ARRANGE
+  arrange(ExperimentalGroup,
+          AnimalID,
+          WeightDate) %>%
+  
+  #ADD WEIGHT - ISOLATION DAY DIFF 
+  mutate(Isolation_DayDiff = WeightDate - IsolationDate) %>% 
+
+  #ADD WEIGHT - PAIRING DAY DIFF
+  mutate(Pairing_DayDiff = WeightDate - PairingDate) %>% 
+  
+  #ADD PAIRING DAY DIFF TO PLOT
+  mutate(Pairing_DayDiff_ToPlot = case_when(Pairing_DayDiff >= 0 ~ Pairing_DayDiff))
+
+View(Plot_BM)
+
+```
+
+
+```{r One colony}
+unique(Plot_BM$ExperimentalGroup)
+
+
+#################################################Vertical lines
+
+Pairing <- DC_Info_F %>% 
+  filter(ExperimentalGroup == "Trolls") %>%
+  mutate(PairingIsolation_DayDiff = PairingDate - IsolationDate) %>% #Could be added in DC_Info 
+  pull(PairingIsolation_DayDiff) %>% 
+  unique()
+Pairing
+
+
+Eviction <- DC_Info_F %>% 
+  filter(ExperimentalGroup == "Trolls") %>%
+  mutate(EvictionIsolation_DayDiff = EvictionDate - IsolationDate) %>% #Could be added in DC_Info 
+  pull(EvictionIsolation_DayDiff) %>% 
+  unique()
+Eviction
+  
+
+
+#################################################Plot single group
+  
+  
+
+
+ggplot(Plot_BM %>% 
+         filter(ExperimentalGroup == "Trolls"), aes(x=Isolation_DayDiff, y=Weight, colour = EvictionStatus)) + 
+  
+  #ADD POINTS 
+  geom_point(size = 1.5) +
+  
+  #ADD LINE
+  geom_line(aes(group = AnimalID, linetype = BS_Original)) +
+  
+  #ADD VERTICAL LINES 
+  geom_vline(xintercept = 0, colour = "black", linetype = "dashed") +
+  geom_vline(xintercept = Pairing, colour = "blue", linetype = "dashed") +
+  geom_vline(xintercept = Eviction, colour = "red", linetype = "dashed") +
+  
+  #POINT LABLELS
+  geom_text(aes(label=Pairing_DayDiff_ToPlot, vjust= -0.5), size = 3) 
+  #check_overlap = TRUE
+      
+ 
+
+
+```
+
+```{r For loop}
+
+```
+
+
+#Relationship Age, Original BS and eviction 
+
+In the queen treatment, queens are obviously always older than the subordinate they were paired with. Thus when queen evicts (n=2) they are older and when sub evict (n=7) they are younger
+
+In the sub treatment older evicted 7 times and younger evicted 2 times. In 
+
+For future rounds we shall try to find younger sub that are heavier than older sub (while maximizing BM difference? )
+
+```{r Summary}
+
+#This section is not really menaingful 
+
+View(AgeDiff_EvictorFocal)
+
+#SummaryTable Wide
+SummaryTable_AgeBS <- AgeDiff_EvictorFocal  %>% 
+   filter(EvictionStatus != "InGroup") %>% 
+   group_by(Treatment,
+            BS_Original) %>% 
+   summarize(Older = sum(AgeDiff > 0),
+          Younger = sum(AgeDiff <0), 
+          Same = sum(AgeDiff == 0)) %>% 
+   ungroup()
+View(SummaryTable_AgeBS)
+ 
+
+#Summary Long format
+SummaryTable_AgeBS_Long <- SummaryTable_AgeBS %>% 
+   pivot_longer(cols = Older:Same,names_to = "Age",values_to = "Count")
+View(SummaryTable_AgeBS_Long)
+ 
+
+#Plot 
+ggplot(SummaryTable_AgeBS_Long,
+   aes(x = BS_Original, y = Count, fill = Age)) +
+  facet_grid(~ Treatment) +
+  geom_col(position = "stack")
+
+
+```
+
+```{r Details}
+
+#Younger sub that evicted older sub 
+View(AgeDiff_EvictorFocal %>% 
+       filter(Treatment == "Sub",
+              AgeDiff <0) %>% 
+       left_join(.,BM_EvictorFocal,by=c("AnimalID" = "AnimalID")))
+#CUF031 (Trolls), lighter than evictee
+#SOF006 (Firestone), heavier than evictee
+#MIF016 (DjuDju), heavier than evictee
+
+
+```
+
+##Older focal
+
+```{r Plot}
+
+
+#Older as focal 
+ggplot(OlderFocal,
+       aes(x=Treatment,y=AgeDiff)) + 
+  
+  #ADD BOXPLOT
+  geom_boxplot(outlier.shape = NA) +
+  
+  #ADD POINTS 
+  geom_jitter(width = 0.1, height = 0, size = 2.5, aes(col=EvictionStatus)) +
+  #geom_point(size = 2, alpha = 0.7, aes(col=EvictionStatus, shape = BS_Original)) +
+
+  theme_classic()
+
+
+
+```
+
+
+##Evictor focal
+
+```{r Plot}
+
+
+#Heavier as focal 
+#With InGroup
+ggplot(AgeDiff_EvictorFocal,
+       aes(x=Treatment,y=AgeDiff)) + 
+  
+  #ADD BOXPLOT
+  geom_boxplot(outlier.shape = NA) +
+  
+  #ADD POINTS 
+  geom_jitter(width = 0.1, height = 0, size = 2.5, aes(col=BS_Original, shape = EvictionStatus)) +
+  
+  geom_hline(yintercept = 0) +
+
+  theme_classic()
+
+
+
+#Heavier as focal 
+#With InGroup
+ggplot(AgeDiff_EvictorFocal %>% 
+         filter(EvictionStatus != "InGroup"),
+       aes(x=Treatment,y=AgeDiff)) + 
+  
+  #ADD BOXPLOT
+  geom_boxplot(outlier.shape = NA) +
+  
+  #ADD POINTS 
+  geom_jitter(width = 0.1, height = 0, size = 2.5, aes(col=BS_Original, shape = EvictionStatus)) +
+  
+  geom_hline(yintercept = 0) +
+
+  theme_classic()
+
+
+```
+
+```{r Comparisons}
+
+```
+
+
+#Timing of eviction
+
+Relative to pairing 
+Relative to Conception 
+Relative to Parturition 
+When the two females got pregant (Licher and Black Label)
+
+#Taking into account the gestation status of both animals

@@ -1,0 +1,252 @@
+---
+title: "Untitled"
+output: html_document
+date: "2024-07-02"
+---
+
+#Aim 
+
+Generate the dataset of hormone concentration for the DC experiment. 
+
+
+
+#General
+
+Hormone [] are corrected for urine volume and specific gravity.
+
+The data still need to be linked with the relevant info for modelling
+
+
+
+#Package
+
+```{r package}
+
+library(tidyverse)
+
+```
+
+
+```{r wd}
+
+Dir_DC <- "C:/Users/Philippe/Dropbox/PhD_20150515/Research projects/DMR_HelperBreedingOpp/DC/DC_Analyses"
+
+#Directory of current tbl 
+Dir_tbl <- "C:/Users/Philippe/Dropbox/PhD_20150515/Research projects/DMR_Database/tbl_Current"
+
+```
+
+
+#Get DB
+
+```{r}
+
+
+#Set wd
+setwd(Dir_tbl)
+
+
+#tbl_Extraction
+tbl_Extraction <- read.csv("tbl_Extraction_20240626.csv") %>% 
+  mutate(ExtractionDate = dmy(ExtractionDate))
+names(tbl_Extraction)
+
+#tbl_SG
+tbl_SG <- read.csv("tbl_SG_20240625.csv") %>% 
+  mutate(SGDate = ymd(SGDate))
+
+
+#qry_MShormones 
+qry_MShormones <- read.csv("qry_MShormones_20240710.csv")
+names(qry_MShormones)
+
+```
+
+
+
+#SG summary 
+
+These value are required to perform the correction for SG using the function sg_correction()
+
+```{r}
+
+#Run function sg_summary
+#Generate SG_Day
+#SampleID
+#SG_Pop
+#These objects are required to calculate SG correction
+SG_Summary <- tbl_SG %>% 
+  sg_summary ()
+
+# Unpack the list into the global environment
+list2env(SG_Summary , envir = .GlobalEnv) 
+
+```
+
+
+#Extracted samples
+
+```{r}
+
+DC_Samples <- qry_MShormones %>% 
+  distinct(NPACID, 
+           SampleID)
+View(DC_Samples)
+#There are 672 samples 
+#includes 9 MF and 9MM 
+#654 samples from DC experiment
+
+
+```
+
+
+#DC hormones
+
+```{r data}
+
+DC_qry_MShormones <- qry_MShormones %>% 
+  filter(BatchID >= 44,
+         BatchID <= 50)
+
+```
+
+
+```{r correction}
+
+DC_Hormones_Corr <- DC_qry_MShormones %>% 
+  #ADD CLOSEST SG 
+  add_closestSG(df_extraction = tbl_Extraction, df_sg = SG_Day) %>% 
+  #APPLY SG CORRECTION TO ALL
+  sg_corr(col_conc = MS_Conc, col_sg = SG_Day) %>% 
+  #APPLY URINE CORRECTION 
+  urinevol_corr(df_extraction = tbl_Extraction, col_conc = MS_Conc_SG)
+
+```
+
+
+```{r DC}
+
+#DC samples for which I have no SG
+DC_NoSG <- DC_Hormones_Corr %>% 
+  filter(is.na(SG_Day)) %>% 
+  distinct(SampleID, NPACID, BatchID)
+View(DC_NoSG)
+#all 0 and 1 samples
+#Indicates that the entry of these samples should be different in tbl_SG or that I had removed 0 and 1 samples from tbl_SG
+
+#NA SampleID 
+DC_NoSG <- DC_Hormones_All %>% 
+  filter(is.na(SG_Day)) %>% 
+  distinct(SampleID, NPACID, BatchID)
+View(DC_NoSG)
+#Only pooled samples
+
+```
+
+
+#Subsetting 
+
+```{r }
+
+DC_Hormones_Selected <- DC_Hormones_Corr %>% 
+  conc_selection()
+
+View(DC_Hormones_Selected %>% 
+       filter(Processed == "Yes",
+              StdCurve_Range == "Low",
+              QTcat == "ND"))
+```
+
+
+#Zero assignement 
+
+I will create 3 datasets 
+
+i) Conservative value: all values that are not Q are assigned 0 
+
+ii) Semi-cons values: All values that are ND and D are assigned 0
+
+iii) non cons values: all processed value == 0 are assigned their NP value 
+
+```{r}
+
+names(DC_Hormones_Selected)
+
+#Conservative []
+Conc_C <- DC_Hormones_Selected %>% 
+  conc_zeroprocess(col_conc = MS_Conc_SG_U, threshold = "Q") %>% 
+  mutate(ConcType = "C")
+
+
+#Semi conservative []
+Conc_SC <- DC_Hormones_Selected %>% 
+  conc_zeroprocess(col_conc = MS_Conc_SG_U, threshold = "D") %>% 
+  mutate(ConcType = "SC")
+
+
+#Non conservative []
+Conc_NC <- DC_Hormones_Selected %>% 
+  conc_zeroprocess(col_conc = MS_Conc_SG_U, threshold = "ND") %>% 
+  mutate(ConcType = "NC")
+
+View(Conc_NC)
+
+
+#Conc all 
+DC_Conc_All <- bind_rows(Conc_C,
+                      Conc_SC,
+                      Conc_NC)
+View(DC_Conc_All %>% 
+       filter(ConcType == "NC"))
+```
+
+
+#Data check
+Perhaps this can be moved into the different pipeline where they apply? However, easier to apply first here as it is easier for me to assess whether the data check codes are doing what I expect them to. Once yes, they could be moved to full pipelines
+
+
+##Duplicated 
+
+```{r}
+
+#Are there samples ID that were done more than once and for which one would need to remove a duplicate
+DC_Duplicated_SampleID <- Conc_All %>% 
+  filter(!SampleID %in% c(0,1)) %>% 
+  distinct(SampleID,NPACID) %>% 
+  add_count(SampleID) %>% 
+  filter(n>1) %>% 
+  left_join(., tbl_Extraction)
+View(DC_Duplicated_SampleID )
+
+```
+
+
+##Loss of samples
+
+```{r}
+
+#NB of extracted samples excluding pooled and contrast with how many samples I have per hormones
+
+```
+
+
+##Saturated samples
+
+```{r}
+
+```
+
+
+#CSV 
+
+```{r}
+
+#set wd
+setwd(Dir_DC)
+
+#write csv
+write.csv(DC_Conc_All, "DC_Conc_All_20240710.csv",row.names = FALSE)
+
+```
+
+

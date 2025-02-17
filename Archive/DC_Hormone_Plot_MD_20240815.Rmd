@@ -1,0 +1,837 @@
+---
+title: "Untitled"
+output: html_document
+date: "2024-08-14"
+editor_options: 
+  chunk_output_type: console
+---
+
+
+```{r Package}
+
+library(tidyverse)
+
+library(officer)
+library(patchwork)
+
+```
+
+```{r Directory}
+
+
+Dir_DC <- "C:/Users/Philippe/Dropbox/PhD_20150515/Research projects/DMR_HelperBreedingOpp/DC/DC_Analyses"
+
+setwd(Dir_DC)
+
+```
+
+```{r Data}
+
+#Group info 
+#The Sampling_Cat of Tusker must be changed to slow_Post as the evictor had produced litter before eviction
+DC_Info_Group <- read.csv("DC_Info_Group_20240710.csv") %>% 
+  mutate(IsolationDate = ymd(IsolationDate),
+         PairingDate = ymd(PairingDate),
+         EvictionDate = ymd(EvictionDate))
+names(DC_Info_Group)
+
+
+#Individual info 
+DC_Info_F <- read.csv("DC_Info_F_20240816.csv") %>% 
+  #REFORMAT DATE
+  mutate(KingRemovalDate = ymd(KingRemovalDate),
+         OriginalGroup_LastParturitionDate = ymd(OriginalGroup_LastParturitionDate),
+         IsolationDate = ymd(IsolationDate),
+         PairingDate = ymd(PairingDate),
+         EvictionDate = ymd(EvictionDate)) %>% 
+  #ADD SAMPLING CAT 
+  left_join(., DC_Info_Group %>% 
+              distinct(ExperimentalGroup,
+                       Sampling_Cat)) %>% 
+  relocate(Sampling_Cat) %>% 
+  #CORRECT EXPERIMENTAL GROUP
+  #Must be corrected in DataPrep 
+  arrange(PairingDate, ExperimentalGroup) %>% 
+  mutate(ExperimentalUnit = match(ExperimentalGroup,
+                                  unique(ExperimentalGroup))) %>% 
+  #ARRANGE 
+  arrange(Sampling_Cat,
+          ExperimentalGroup,
+          EvictionStatus)
+
+
+#Urine info 
+#check what info is there
+DC_Info_Urine_F <- read.csv("DC_Info_Urine_F_20240816.csv") %>% 
+  rename(SampleID = UrineNumber)
+names(DC_Info_Urine_F)
+
+
+#Hormone concentration 
+#write csv
+DC_Conc_All <-read.csv("DC_Conc_All_20240814.csv")
+
+names(DC_Info_Urine_F)
+View(Data_ToPlot  %>% 
+       distinct(QTcat))
+
+#Hormone Info to plot 
+# I will use non-conservative value
+# Remove sample that have not been analysed
+Data_ToPlot <- DC_Info_Urine_F %>%
+  
+  #JOIN CONC
+  inner_join(., DC_Conc_All) %>%
+  
+  #ADD EVICTION PAIRING DAY DIFF 
+  left_join(DC_Info_F %>% 
+              select(ExperimentalGroup, 
+                     EvictionPairingDayDiff,
+                     ExperimentalUnit)) %>% 
+  
+  #ONLY RETAIN NON-CONS VALUES FOR PLOTTING
+  filter(ConcType == "NC") %>% 
+  
+  #REFORMAT
+  #For some reason the conc was now returned in sceintific number
+  mutate(Conc = as.numeric(format(Conc, scientific = FALSE))) %>% 
+  
+  # RELEVEL HORMONES
+  mutate(Hormone = fct_relevel(Hormone, "E2", "P4", "A4", "DHEA", "T", "11KT", "Col", "Con")) %>% 
+  
+  #RELEVEL TREATMENT 
+  mutate(Treatment = fct_relevel(Treatment, "Sub", "Queen")) %>% 
+  
+  #RELEVEL SAMPLING CAT
+  mutate(Sampling_Cat = fct_relevel(Sampling_Cat,"Rapid_Conc", "Rapid_PreFirst", "Slow_PostFirst","Slow_Conc", "Slow_PreFirst", "Slow_None", "NoEviction")) %>% 
+  
+  
+    #SELECT COLUMNS 
+  select(Sampling_Cat,
+         ExperimentalGroup,
+         ExperimentalUnit,
+         Treatment,
+         AnimalID,
+         BS_Original,
+         EvictionStatus,
+         UrineIsol_DayDiff,
+         UrinePairing_DayDiff,
+         UrineEviction_DayDiff,
+         Hormone,
+         ConcType,
+         QTcat,
+         Conc)
+
+unique(Data_ToPlot$Sampling_Cat)
+  
+
+```
+
+
+
+```{r Vector to plot over}
+
+#Vector of individuals to loop over
+Group_ToPlot <- Data_ToPlot %>% 
+  distinct(ExperimentalGroup) %>% 
+  pull() 
+
+#Group of hormones to plot 
+Hormones_ToPlot <- Data_ToPlot %>% 
+  arrange(Hormone) %>% 
+  distinct(Hormone) %>% 
+  pull()
+
+
+#Vector of hormones to loop over
+Hormones_ToPlot <- Data_ToPlot %>% 
+  arrange(Hormone) %>% 
+  distinct(Hormone) %>% 
+  pull()
+
+```
+
+
+
+#Til Isolation
+
+##Individual 
+
+
+```{r graph settings}
+
+
+#eviction status 
+#Colour
+Col_EvStatus <- setNames(c('grey', 'black', 'black'), c("Evictee","InGroup","Evictor"))
+
+#BS_Original
+#Helper get a joined line, breeder a two dashed line 
+L_BS <- setNames(c('dashed', 'solid'), c("Breeder","Helper"))
+
+#QTcat
+Col_QTcat <- setNames(c('white', 'grey', 'black'), c("ND","D","Q"))
+
+
+```
+
+```{r Data}
+
+#Subset the data 
+ToPlot <- Data_ToPlot %>% 
+  filter(UrinePairing_DayDiff <= 0) %>% 
+  
+  #ARRANGE
+  #To match what is needed for graph
+  arrange(Treatment, 
+          Sampling_Cat,
+          ExperimentalUnit)
+names(ToPlot)
+
+```
+
+
+```{r Single group }
+
+p <- ggplot(ToPlot %>% 
+              filter(ExperimentalGroup == "Asahi", Hormone == "E2"), 
+            aes(x = UrineIsol_DayDiff, y = Conc, group = AnimalID, 
+                linetype = BS_Original, fill = QTcat)) +
+  
+  # ADD LINE
+  geom_line(size = 1, aes(color = EvictionStatus)) +
+  
+  # ADD POINTS with shapes for each AnimalID and ensure correct fill and color in the legend
+  geom_point(size = 3, aes(shape = AnimalID), color = "black") +
+  
+  # SET COLORS FOR EVICTION STATUS (LINE COLORS)
+  scale_color_manual(values = Col_EvStatus) +
+  
+  # SET LINE TYPE FOR BS_ORIGINAL
+  scale_linetype_manual(values = L_BS) +
+  
+  # SET COLORS FOR QTcat (POINT FILL COLORS)
+  scale_fill_manual(values = Col_QTcat) +
+  
+  # MANUALLY SET SHAPES FOR EACH AnimalID
+  scale_shape_manual(values = c(21, 24)) +
+  
+  # CUSTOM LEGEND TITLES
+  labs(shape = "AnimalID", fill = "QTcat", color = "Eviction Status") +
+  
+  # OVERRIDE POINT LEGEND TO SHOW THE CORRECT COLORS
+  guides(
+    fill = guide_legend(override.aes = list(shape = 21, color = "black")),
+    color = guide_legend(order = 1),
+    linetype = guide_legend(order = 2),
+    shape = guide_legend(order = 3)
+  ) +
+  
+  # MINIMAL THEME
+  theme_minimal()+
+  
+  #REMOVE LEGEND FROM INDIVIDUAL GRAPH
+  theme(legend.position = "none") 
+
+#ADD VLINE KING REMOVAL
+#RED
+if(length(KingRemov_Plot) != 0){
+    #SET NEW MIN X AXIS 
+    new_min_x <- min(KingRemov_Plot) - 2  # Adjust to start before the marker
+  p <- p +
+    xlim(c(new_min_x, NA))+
+    geom_vline(xintercept = KingRemov_Plot, colour = "red", linetype = "dashed", size = 1)}
+
+
+#ADD VLINE LAST PARTURITION
+#BLUE
+#The selection of parturition to be shown as been made in the filter
+if(length(LastPart_Plot) != 0){
+  #SET NEW MIN X AXIS 
+  new_min_x <- min(new_min_x, min(LastPart_Plot) - 2)  # Adjust to start before the marker
+  p <- p +
+    xlim(c(new_min_x, NA))+
+    geom_vline(xintercept = LastPart_Plot, colour = "blue", linetype = "dashed", size = 1)}
+
+
+  #ADD VLINE PAIRING
+if(length(Pairing_Plot) != 0){
+  p <- p +
+    geom_vline(xintercept = Pairing_Plot, colour = "Brown", linetype = "dashed", size = 1)}
+
+
+
+# Print the plot
+print(p)
+
+
+#EXTRACT LEGEND
+
+#DRAW TITLE 
+
+
+
+
+```
+
+```{r for loop 1 group all hormones}
+
+
+#CREATE A LIST 
+List <- vector(mode = "list")
+
+
+#Open power point 
+ppt_E <-
+  # Load template
+  read_pptx()
+
+ppt_W <-
+  # Load template
+  read_pptx()
+
+ppt_A <-
+  # Load template
+  read_pptx()
+
+ppt_GC <-
+  # Load template
+  read_pptx()
+
+
+#INFO FOR TITLE
+Info <- DC_Info_F %>%
+    filter(ExperimentalGroup == "Trolls") %>%
+    distinct(Sampling_Cat, ExperimentalGroup, Treatment, ExperimentalUnit)
+  
+
+for(j in (1:length(Hormones_ToPlot))) {
+    
+p <- ggplot(ToPlot %>% 
+              filter(ExperimentalGroup == "Trolls", Hormone == Hormones_ToPlot[j]), 
+            aes(x = UrineIsol_DayDiff, y = Conc, group = AnimalID, 
+                linetype = BS_Original, fill = QTcat)) +
+  
+  # ADD LINE
+  geom_line(size = 1, aes(color = EvictionStatus)) +
+  
+  # ADD POINTS with shapes for each AnimalID and ensure correct fill and color in the legend
+  geom_point(size = 3, aes(shape = AnimalID), color = "black") +
+  
+  # SET COLORS FOR EVICTION STATUS (LINE COLORS)
+  scale_color_manual(values = Col_EvStatus) +
+  
+  # SET LINE TYPE FOR BS_ORIGINAL
+  scale_linetype_manual(values = L_BS) +
+  
+  # SET COLORS FOR QTcat (POINT FILL COLORS)
+  scale_fill_manual(values = Col_QTcat) +
+  
+  # MANUALLY SET SHAPES FOR EACH AnimalID
+  scale_shape_manual(values = c(21, 24)) +
+  
+  # CUSTOM LEGEND TITLES
+  labs(shape = "AnimalID", fill = "QTcat", color = "Eviction Status") +
+  
+  # OVERRIDE POINT LEGEND TO SHOW THE CORRECT COLORS
+  guides(
+    fill = guide_legend(override.aes = list(shape = 21, color = "black")),
+    color = guide_legend(order = 1),
+    linetype = guide_legend(order = 2),
+    shape = guide_legend(order = 3)
+  ) +
+  
+    #Y LABELS
+    ylab(label = paste(Hormones_ToPlot[j],"conc [ng/ml]", sep = " ")) +
+  
+  #SET MARGIN TO MINIMUM
+  theme(plot.margin = margin(0, 0, 0, 0)) +
+        
+  # MINIMAL THEME
+  theme_minimal()+
+  
+  #REMOVE LEGEND FROM INDIVIDUAL GRAPH
+  theme(legend.position = "none") 
+
+#ADD VLINE KING REMOVAL
+#RED
+if(length(KingRemov_Plot) != 0){
+    #SET NEW MIN X AXIS 
+    new_min_x <- min(KingRemov_Plot) - 2  # Adjust to start before the marker
+  p <- p +
+    xlim(c(new_min_x, NA))+
+    geom_vline(xintercept = KingRemov_Plot, colour = "red", linetype = "dashed", size = 1)}
+
+
+#ADD VLINE LAST PARTURITION
+#BLUE
+#The selection of parturition to be shown as been made in the filter
+if(length(LastPart_Plot) != 0){
+  #SET NEW MIN X AXIS 
+  new_min_x <- min(new_min_x, min(LastPart_Plot) - 2)  # Adjust to start before the marker
+  p <- p +
+    xlim(c(new_min_x, NA))+
+    geom_vline(xintercept = LastPart_Plot, colour = "blue", linetype = "dashed", size = 1)}
+
+
+  #ADD VLINE PAIRING
+if(length(Pairing_Plot) != 0){
+  p <- p +
+    geom_vline(xintercept = Pairing_Plot, colour = "Brown", linetype = "dashed", size = 1)}
+
+print(p)
+
+#PLACE FIGURE IN LIST 
+List[[j]] <- p
+
+print(p)
+    
+    
+}
+
+
+  #EXTRACT LEGEND OF FIRST GRAPH
+Legend <- cowplot::get_legend(List[[1]] + theme(legend.position = "right"))
+
+
+#STACK GRAPH VERTICALLY 
+Oestrogen <- cowplot::plot_grid(List[[1]], List[[2]], ncol = 1)
+W <- cowplot::plot_grid(List[[3]], List[[4]], ncol = 1)
+Androgen <- cowplot::plot_grid(List[[5]], List[[6]], ncol = 1)
+GC <- cowplot::plot_grid(List[[7]], List[[8]], ncol = 1)
+
+#COMBINE GRAPH AND LEGENDS
+Oestrogen_L <- cowplot::plot_grid(Oestrogen, Legend, ncol = 2, rel_widths = c(9, 1))
+W_L <- cowplot::plot_grid(W, Legend, ncol = 2, rel_widths = c(9, 1))
+Androgen_L <- cowplot::plot_grid(Androgen, Legend, ncol = 2, rel_widths = c(9, 1))
+GC_L <- cowplot::plot_grid(GC, Legend, ncol = 2, rel_widths = c(9, 1))
+
+  #DRAW TITLE
+Title <- cowplot::ggdraw() + 
+  cowplot::draw_label(
+    paste(Info$Treatment,":",Info$Sampling_Cat,":",Info$ExperimentalGroup,":",Info$ExperimentalUnit,  sep = ""), 
+    fontface = 'bold', 
+    size = 12, 
+    hjust = 0.5
+  )
+
+#COMBINE FINAL GRAPH WITH THE TITLE
+Oestrogen_L_T<- cowplot::plot_grid(Title, Oestrogen_L, ncol = 1, rel_heights = c(0.1, 1))
+W_L_T<- cowplot::plot_grid(Title, W_L, ncol = 1, rel_heights = c(0.1, 1))
+Androgen_L_T<- cowplot::plot_grid(Title, Androgen_L, ncol = 1, rel_heights = c(0.1, 1))
+GC_L_T<- cowplot::plot_grid(Title, GC_L, ncol = 1, rel_heights = c(0.1, 1))
+  
+
+#CREATE AN EDITABLE PLOT 
+  Oestrogen <- rvg::dml(ggobj = Oestrogen_L_T)
+  W <- rvg::dml(ggobj = W_L_T)
+  Androgen <- rvg::dml(ggobj = Androgen_L_T)
+  GC <- rvg::dml(ggobj = GC_L_T)
+  
+
+
+#CREATE POWER POINT
+  #E PP
+  ppt_E <- ppt_E %>% 
+  # ADD SLIDE 
+  add_slide(layout = "Title and Content", master = "Office Theme") %>%
+  # ADD BOXPLOT
+  ph_with(value = Oestrogen,
+          location = ph_location(left = 0, top = 0, width = 10, height = 7.5)) %>%
+  #PRINT PDF
+  print('E_PreP.pptx')
+
+  
+  #WEAK ANDROGEN PP
+  ppt_W <- ppt_W %>% 
+  # ADD SLIDE 
+  add_slide(layout = "Title and Content", master = "Office Theme") %>%
+  # ADD BOXPLOT
+  ph_with(value = Oestrogen,
+          location = ph_location(left = 0, top = 0, width = 10, height = 7.5)) %>%
+  #PRINT PDF
+  print('W_PreP.pptx')
+
+  
+  #ANDROGEN PP
+  ppt_A <- ppt_A %>% 
+  # ADD SLIDE 
+  add_slide(layout = "Title and Content", master = "Office Theme") %>%
+  # ADD BOXPLOT
+  ph_with(value = Oestrogen,
+          location = ph_location(left = 0, top = 0, width = 10, height = 7.5)) %>%
+  #PRINT PDF
+  print('A_PreP.pptx')
+  
+  #GC PP 
+  ppt_GC <- ppt_GC %>% 
+  # ADD SLIDE 
+  add_slide(layout = "Title and Content", master = "Office Theme") %>%
+  # ADD BOXPLOT
+  ph_with(value = Oestrogen,
+          location = ph_location(left = 0, top = 0, width = 10, height = 7.5)) %>%
+  #PRINT PDF
+  print('GC_PreP.pptx')
+
+
+
+
+
+```
+
+
+##All individuals
+
+Show all individuals graphs in power point 
+
+Vertical line red = King removal 
+Vertical blue line = Last parturition 
+Vertical brown line = Pairing 
+
+King Removal is shown for all groups from the breeding treatment where the king was removed and also all the sub treatment that were formed from the same original group
+
+
+
+```{r graph settings}
+
+#eviction status 
+#Colour
+Col_EvStatus <- setNames(c('grey', 'black', 'black'), c("Evictee","InGroup","Evictor"))
+
+#BS_Original
+#Helper get a joined line, breeder a two dashed line 
+L_BS <- setNames(c('dashed', 'solid'), c("Breeder","Helper"))
+
+#QTcat
+Col_QTcat <- setNames(c('white', 'grey', 'black'), c("ND","D","Q"))
+
+```
+
+One must arrange the data in a way that suits the graph
+
+```{r Data}
+
+#Subset the data 
+ToPlot <- Data_ToPlot %>% 
+  
+  #RETAIN [] FROM BEFORE PAIRING
+  filter(UrinePairing_DayDiff <= 0) %>% 
+  
+  #ARRANGE
+  #To match what is needed for graph
+  arrange(Treatment, 
+          Sampling_Cat,
+          ExperimentalUnit)
+
+```
+
+
+```{r ForLoop}
+
+#Open power point 
+ppt_E <-
+  # Load template
+  read_pptx()
+
+ppt_W <-
+  # Load template
+  read_pptx()
+
+ppt_A <-
+  # Load template
+  read_pptx()
+
+ppt_GC <-
+  # Load template
+  read_pptx()
+
+
+#LOOP OVER EACH EXP GROUP
+for(i in (1: length(Group_ToPlot))) {
+  
+#CREATE LIST
+List <- vector(mode = "list")
+
+
+#LAST PARTURITION INFO
+#Relative to isolation
+LastPart <- DC_Info_F %>% 
+  mutate(LastParturition = as.numeric(LastOrGroupPartIsol_DayDiff)) %>% 
+  #RETAIN KING REMOVAL DATE OR WITHIN 100 days
+  filter(!is.na(KingRemovalDate) | LastParturition > -100) %>%
+  #DISTINCT
+  distinct(ExperimentalGroup,
+         LastParturition) %>% 
+  filter(ExperimentalGroup == Group_ToPlot[i]) %>% 
+  pull(LastParturition)
+
+
+#KING REMOVAL INFO 
+#relative to isolation
+KingRemov <- DC_Info_F %>% 
+  mutate(KingRemoval = as.numeric(KingRemovalDate - IsolationDate)) %>% 
+  distinct(ExperimentalGroup,
+           KingRemoval) %>% 
+  filter(ExperimentalGroup == Group_ToPlot[i]) %>% 
+  pull(KingRemoval)
+
+
+#PAIRING INFO
+#Relative to isolation
+Pairing <- DC_Info_Group %>% 
+  mutate(Pairing = as.numeric(PairingDate - IsolationDate)) %>% 
+  select(ExperimentalGroup,
+         Pairing) %>% 
+  filter(ExperimentalGroup == Group_ToPlot[i]) %>% 
+  pull(Pairing)
+
+
+#TITLE INFO
+Info <- DC_Info_F %>%
+    filter(ExperimentalGroup == Group_ToPlot[i]) %>%
+    distinct(Sampling_Cat, ExperimentalGroup, Treatment, ExperimentalUnit)
+
+
+#LOOP OVER EACH HORMONES
+for(j in (1:length(Hormones_ToPlot))) {
+    
+p <- ggplot(ToPlot %>% 
+              filter(ExperimentalGroup == Group_ToPlot[i], Hormone == Hormones_ToPlot[j]), 
+            aes(x = UrineIsol_DayDiff, y = Conc, group = AnimalID, 
+                linetype = BS_Original, fill = QTcat)) +
+  
+  # ADD LINE
+  geom_line(size = 1, aes(color = EvictionStatus)) +
+  
+  # ADD POINTS with shapes for each AnimalID and ensure correct fill and color in the legend
+  geom_point(size = 3, aes(shape = AnimalID), color = "black") +
+  
+  # SET COLORS FOR EVICTION STATUS (LINE COLORS)
+  scale_color_manual(values = Col_EvStatus) +
+  
+  # SET LINE TYPE FOR BS_ORIGINAL
+  scale_linetype_manual(values = L_BS) +
+  
+  # SET COLORS FOR QTcat (POINT FILL COLORS)
+  scale_fill_manual(values = Col_QTcat) +
+  
+  # MANUALLY SET SHAPES FOR EACH AnimalID
+  scale_shape_manual(values = c(21, 24)) +
+  
+  # CUSTOM LEGEND TITLES
+  labs(shape = "AnimalID", fill = "QTcat", color = "Eviction Status") +
+  
+  # OVERRIDE POINT LEGEND TO SHOW THE CORRECT COLORS
+  guides(
+    fill = guide_legend(override.aes = list(shape = 21, color = "black")),
+    color = guide_legend(order = 1),
+    linetype = guide_legend(order = 2),
+    shape = guide_legend(order = 3)
+  ) +
+  
+    #Y LABELS
+    ylab(label = paste(Hormones_ToPlot[j],"conc [ng/ml]", sep = " ")) +
+  
+  #SET MARGIN TO MINIMUM
+  theme(plot.margin = margin(0, 0, 0, 0)) +
+        
+  # MINIMAL THEME
+  theme_minimal()+
+  
+  #REMOVE LEGEND FROM INDIVIDUAL GRAPH
+  theme(legend.position = "none") 
+
+#ADD VLINE KING REMOVAL
+#RED
+if(length(KingRemov) != 0){
+    #SET NEW MIN X AXIS 
+    new_min_x <- min(KingRemov) - 2  # Adjust to start before the marker
+  p <- p +
+    xlim(c(new_min_x, NA))+
+    geom_vline(xintercept = KingRemov, colour = "red", linetype = "dashed", size = 1)}
+
+
+#ADD VLINE LAST PARTURITION
+#BLUE
+#The selection of parturition to be shown as been made in the filter
+if(length(LastPart) != 0){
+  #SET NEW MIN X AXIS 
+  new_min_x <- min(new_min_x, min(LastPart) - 2)  # Adjust to start before the marker
+  p <- p +
+    xlim(c(new_min_x, NA))+
+    geom_vline(xintercept = LastPart, colour = "blue", linetype = "dashed", size = 1)}
+
+
+  #ADD VLINE PAIRING
+if(length(Pairing) != 0){
+  p <- p +
+    geom_vline(xintercept = Pairing, colour = "Brown", linetype = "dashed", size = 1)}
+
+#PLACE FIGURE IN LIST 
+List[[j]] <- p
+    
+    
+}
+
+
+  #EXTRACT LEGEND OF FIRST GRAPH
+Legend <- cowplot::get_legend(List[[1]] + theme(legend.position = "right"))
+
+
+#STACK GRAPH VERTICALLY 
+Oestrogen <- cowplot::plot_grid(List[[1]], List[[2]], ncol = 1)
+W <- cowplot::plot_grid(List[[3]], List[[4]], ncol = 1)
+Androgen <- cowplot::plot_grid(List[[5]], List[[6]], ncol = 1)
+GC <- cowplot::plot_grid(List[[7]], List[[8]], ncol = 1)
+
+#COMBINE GRAPH AND LEGENDS
+Oestrogen_L <- cowplot::plot_grid(Oestrogen, Legend, ncol = 2, rel_widths = c(9, 1))
+W_L <- cowplot::plot_grid(W, Legend, ncol = 2, rel_widths = c(9, 1))
+Androgen_L <- cowplot::plot_grid(Androgen, Legend, ncol = 2, rel_widths = c(9, 1))
+GC_L <- cowplot::plot_grid(GC, Legend, ncol = 2, rel_widths = c(9, 1))
+
+  #DRAW TITLE
+Title <- cowplot::ggdraw() + 
+  cowplot::draw_label(
+    paste(Info$Treatment,":",Info$Sampling_Cat,":",Info$ExperimentalGroup,":",Info$ExperimentalUnit,  sep = ""), 
+    fontface = 'bold', 
+    size = 12, 
+    hjust = 0.5
+  )
+
+#COMBINE FINAL GRAPH WITH THE TITLE
+Oestrogen_L_T<- cowplot::plot_grid(Title, Oestrogen_L, ncol = 1, rel_heights = c(0.1, 1))
+W_L_T<- cowplot::plot_grid(Title, W_L, ncol = 1, rel_heights = c(0.1, 1))
+Androgen_L_T<- cowplot::plot_grid(Title, Androgen_L, ncol = 1, rel_heights = c(0.1, 1))
+GC_L_T<- cowplot::plot_grid(Title, GC_L, ncol = 1, rel_heights = c(0.1, 1))
+  
+
+#CREATE AN EDITABLE PLOT 
+  Oestrogen <- rvg::dml(ggobj = Oestrogen_L_T)
+  W <- rvg::dml(ggobj = W_L_T)
+  Androgen <- rvg::dml(ggobj = Androgen_L_T)
+  GC <- rvg::dml(ggobj = GC_L_T)
+  
+
+
+#CREATE POWER POINT
+  #E PP
+  ppt_E <- ppt_E %>% 
+  # ADD SLIDE 
+  add_slide(layout = "Title and Content", master = "Office Theme") %>%
+  # ADD BOXPLOT
+  ph_with(value = Oestrogen,
+          location = ph_location(left = 0, top = 0, width = 10, height = 7.5))
+
+  #WEAK ANDROGEN PP
+  ppt_W <- ppt_W %>% 
+  # ADD SLIDE 
+  add_slide(layout = "Title and Content", master = "Office Theme") %>%
+  # ADD BOXPLOT
+  ph_with(value = Oestrogen,
+          location = ph_location(left = 0, top = 0, width = 10, height = 7.5))
+
+  
+  #ANDROGEN PP
+  ppt_A <- ppt_A %>% 
+  # ADD SLIDE 
+  add_slide(layout = "Title and Content", master = "Office Theme") %>%
+  # ADD BOXPLOT
+  ph_with(value = Oestrogen,
+          location = ph_location(left = 0, top = 0, width = 10, height = 7.5))
+  
+  #GC PP 
+  ppt_GC <- ppt_GC %>% 
+  # ADD SLIDE 
+  add_slide(layout = "Title and Content", master = "Office Theme") %>%
+  # ADD BOXPLOT
+  ph_with(value = Oestrogen,
+          location = ph_location(left = 0, top = 0, width = 10, height = 7.5))
+
+}
+
+#PRINT PDF 
+ppt_E <-   ppt_E %>% 
+  print('PrePair_E.pptx')
+
+ppt_W <-   ppt_W %>% 
+  print('PrePair_W.pptx')
+
+ppt_A <-   ppt_A %>% 
+  print('PrePair_A.pptx')
+
+ppt_GC <-   ppt_GC %>% 
+  print('PrePair_GC.pptx')
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+#The next part is to be moved in the sample selection files
+
+Selection of samples to assess whether females ovulate after the removal of the breeding male. 
+
+I should finalize the selection only after I have visualized all profile til pairing
+
+```{r BF ovulation sample}
+names(DC_Info_F)
+#Distribution of delay between last parturition in original group and isolation 
+View(DC_Info_F %>% 
+       filter(!is.na(KingRemovalDate)) %>% 
+       select(AnimalID, 
+              BS_Original,
+              ExperimentalGroup, 
+              Treatment,
+              KingRemovalDate,
+              LastOrGroupPartIsol_DayDiff) %>% 
+       arrange(desc(LastOrGroupPartIsol_DayDiff)))
+#Between 19 and 591 days 
+
+
+#Retain all samples after last parturition and after removal of king 
+BF_Ovulation <- DC_Info_Urine_F %>%
+  #ADD DAY DIFF ISOL LAST PARTURITION
+  left_join(., DC_Info_F %>% 
+              select(AnimalID,
+                     LastOrGroupPartIsol_DayDiff)) %>% 
+  #RETAIN BREEDER TREATMENT
+  filter(BS_Original == "Breeder") %>% 
+  #RETAIN SAMPLES AFTER KING REMOVAL 
+  filter(UrineKingRemoval_DayDiff > 0) %>%
+  #RETAIN SAMPLES AFTER LAST PARTURION 
+  filter(UrineLastParturitionOirginalGroup_DayDiff > 0) %>% 
+  #RETAIN SAMPLES BEFORE PAIRING
+  filter(UrinePairing_DayDiff < 0) %>% 
+  #ARRANGE
+  arrange(Sampling_Cat,
+          desc(LastOrGroupPartIsol_DayDiff),
+          ExperimentalGroup) %>% 
+  #SELECT 
+  select(Sampling_Cat, 
+         ExperimentalGroup,
+         AnimalID,
+         LastOrGroupPartIsol_DayDiff,
+         UrineParturition_DayDiff,
+         UrineKingRemoval_DayDiff,
+         UrineLastParturitionOirginalGroup_DayDiff,
+         UrineIsol_DayDiff,
+         UrinePairing_DayDiff,
+         UrineNumber)
+
+View(BF_Ovulation)
+
+```
+

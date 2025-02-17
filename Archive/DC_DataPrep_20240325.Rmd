@@ -1,0 +1,1654 @@
+---
+title: "Untitled"
+output: html_document
+date: '2023-01-16'
+editor_options: 
+  chunk_output_type: console
+---
+
+#General
+
+- Script started 16th January 2023 to generate a list of DC sample export and suggest a budget for hormone analyses to TCB
+
+- The code and joins are a bit messy at some point but they work
+
+
+#Package 
+
+```{r package, include=FALSE}
+
+library(tidyverse)
+library(RMySQL)
+library(lubridate)
+
+```
+
+
+#DB connection
+
+```{r data and functions}
+
+#extract relevant info from database
+#Only remove stuff from the original that can be found in Ratop
+#All additions or changes must be done on the Rfile in Ratop, then copy pasted here
+#don't run the new behaviour import if not necessary because it takes for ages
+source("C:/Users/Philippe/Dropbox/PhD_20150515/Research projects/DMR_HelperBreedingOpp/DC/DC_Analyses/Database_Extract_DC_20230116.R")
+
+
+#Load relevant functions
+source("C:/Users/Philippe/Dropbox/PhD_20150515/Research projects/DMR_Ratop/DMRfunctions_20211109.R")
+
+
+#Life History information 
+source("C:/Users/Philippe/Dropbox/PhD_20150515/Research projects/DMR_Ratop/DMRfunctions_20211109.R")
+
+```
+
+#Experiment info 
+
+##AnimalID
+
+It looks like all the animals from the last round of pairing are missing. Asked Channen to fill the information on the 14/03/2023
+
+In DC_AnimalID, pay attention that start date is NOT synonym to the pairing date
+
+```{r AnimalID}
+
+#DC animals
+#Could be used to query experiment start. The alternative is to use pairing date (currently used)
+DC_AnimalID <- con %>%
+  dbGetQuery ("SELECT AnimalID,
+DATE(DateStart) AS StartDate
+FROM Moleratdatabase.tblExperiments
+WHERE Experiment = '49'") %>%
+  
+  #RENAME START DATE 
+  mutate(StartDate = ymd(StartDate)) %>%
+  
+  #REMOVE PUPS BORN OF DC 
+  left_join(.,qry_BirthDate) %>%
+  
+  #DISTINCT 
+  distinct(AnimalID, 
+           StartDate)
+
+View(DC_AnimalID)
+#DRM006 has been used 2x
+#This is why we have 74 animals instead of 75
+
+
+#Males
+DC_Males <- DC_AnimalID %>% 
+  left_join(.,tblSex) %>% 
+  filter(Sex == "M") %>% 
+  distinct(AnimalID)
+View(DC_Males)
+#24 males 
+#DRM006 has been used 2x
+
+
+#Females
+DC_Females <- DC_AnimalID %>% 
+  left_join(.,tblSex) %>% 
+  filter(Sex == "F") %>% 
+  distinct(AnimalID)
+View(DC_Females)
+#50 females all there 
+
+```
+
+
+##Static 
+
+```{r}
+
+DC_AnimalID_Static <- DC_AnimalID %>% 
+  idinfo_static()
+
+View(DC_AnimalID_Static)
+
+```
+
+
+##Membership 
+
+```{r Membership}
+
+#Membership of DC animals
+DC_Membership <- DC_AnimalID %>% 
+  left_join(.,MembershipBetweenV2)
+View(DC_Membership)
+
+```
+
+
+##Pairing info
+
+Will be used to:
+i) Pairing date = Start of experiment 
+ii) Experimental group 
+
+DRM006 has been used in Firestone and then Kasteel. I suppose he was used for Kasteel at the death of the breeding female in Firestone
+
+```{r Pairing info}
+
+#Pairing info 
+DC_PairingInfo <- DC_AnimalID %>% 
+  left_join(., Pairing_Info) %>% 
+  
+  #RETAIN PAIRING OF INTEREST
+  #After start of experiment
+  filter(PairingDate > 	"2021-12-01") %>% 
+  
+  #MANUAL CORRECTION 
+  mutate(AnimalID = case_when(AnimalID == "PPF008" & PairingID == 362 ~ "PPF009",
+                              TRUE ~ AnimalID)) %>% 
+  mutate(PairingStart_DayDiff = PairingDate - StartDate) %>% 
+  
+  #REMOVE WRONG INFO DRM006
+  filter(PairingStart_DayDiff < 200,
+         PairingStart_DayDiff > -200)
+
+
+  
+View(DC_PairingInfo)
+
+
+
+##################################################DC
+
+#Animals with multiple pairing 
+#Check for duplicates
+C_MutiplePairing <- DC_PairingInfo %>% 
+  count(AnimalID) %>% 
+  filter(n>1)
+View(C_MutiplePairing)
+#DRM006 is entered 2x 
+#In Firestone and Kasteel
+
+#Entries from animals that have been paired more than once
+C_MutiplePairing_Info <- DC_PairingInfo %>% 
+  filter(AnimalID %in% C_MutiplePairing$AnimalID)
+View(C_MutiplePairing_Info)
+
+
+#AnimalID without pairing
+View(anti_join(DC_AnimalID,DC_PairingInfo))
+
+
+#Groups that do not have 3 animals as they should
+C_WrongGroupSize <- DC_PairingInfo %>% 
+  group_by(PairingColony) %>% 
+  mutate(GroupSize = n()) %>% 
+  ungroup() %>% 
+  filter(GroupSize !=3)
+View(C_WrongGroupSize)
+#Delirium is missing its male
+
+```
+
+
+```{r ExperimentalGroup}
+
+#ExperimentalGroup 
+DC_ExperimentalGroup <- DC_PairingInfo %>% 
+  select(AnimalID,
+         StartDate, #MUST BE KEPF FOR THE JOIN IN DC_INFO
+         PairingDate,
+         PairingColony) %>% 
+  rename(ExperimentalGroup = PairingColony)
+View(DC_ExperimentalGroup)
+
+
+unique(DC_ExperimentalGroup$ExperimentalGroup)
+
+```
+
+
+```{r PairingDate}
+
+#StartDate = PairingDate
+DC_PairingDates <- DC_PairingInfo %>% 
+  select(AnimalID,
+         PairingColony,
+         PairingDate)
+View(DC_PairingDates)
+
+```
+
+
+##Pre-Pairing info
+
+Will be used to:
+
+i) Isolation date: Date at which they were removed from the group to go to isolation group
+
+ii) Original group: queried as group they belonged to 6 months before the experiment started  
+
+```{r Pre-Pairing Group}
+
+DC_PrePairingGroup <- DC_PairingDates %>% 
+  mutate(Date = PairingDate - 180) %>% 
+  membership() %>% 
+  select(AnimalID,
+         PairingColony,
+         Colony) %>% 
+  rename(OriginalGroup = Colony)
+View(DC_PrePairingGroup)
+
+
+```
+
+
+```{r IsolationDates}
+names(MembershipBetweenV2)
+#When they were removed from their original group 
+
+
+#OriginalGroup
+DC_OriginalGroup_Membership <- DC_PrePairingGroup %>% 
+  left_join(.,MembershipBetweenV2, by = c("OriginalGroup" = "Colony", "AnimalID" = "AnimalID")) %>%
+  
+  #DISTINCT
+  distinct()
+View(DC_OriginalGroup_Membership)
+
+
+#How many original group for the females used in the experiment
+View(DC_OriginalGroup_Membership %>%
+       left_join(., tblSex) %>% 
+       filter(Sex == "F") %>% 
+       distinct(OriginalGroup))
+#17 and not 25
+#That means some original group had females being taken for the Sub and the queen treatment 
+
+
+
+#Duplicate
+# DC_OriginalGroup_Membership_Duplicate <- DC_OriginalGroup_Membership %>% 
+#   count(AnimalID)
+# View(DC_OriginalGroup_Membership_Duplicate)
+
+
+#Last stay in OriginalGroup
+DC_OriginalGroup_LastMembership <-  DC_OriginalGroup_Membership %>% 
+  
+  #RETAIN LAST MEMBERSHIP
+  #If not done, duplicated rows of animals ID (in and out of their group)
+  group_by(AnimalID, OriginalGroup) %>% 
+  slice_max(MemberTo) %>% 
+  ungroup()
+  
+View(DC_OriginalGroup_LastMembership)
+#1 row less than DC animals
+
+
+################################################### DC 
+#Animals missing from membership
+MissingOriginalGroup <- anti_join(DC_AnimalID, DC_OriginalGroup_LastMembership, by=c("AnimalID" = "AnimalID"))
+
+#Info of missing animals
+MissingOriginalGroup_MembershipInfo <- MembershipBetweenV2 %>% filter(AnimalID %in% MissingOriginalGroup$AnimalID) 
+View(MissingOriginalGroup_MembershipInfo)
+
+################################################### DC 
+
+DC_IsolationDates <- DC_OriginalGroup_LastMembership %>% 
+  select(AnimalID, 
+         PairingColony,
+         MemberTo) %>% 
+  rename(IsolationDate = MemberTo)
+View(DC_IsolationDates)
+```
+
+When more than 2 females were taken from a given group to be isolated (to create more than 1 experimental unit), the females from the different Experimental unit were isolated on the same day 
+
+Thus teh delay between latest parturition in the original group and the isolation date should be teh same for every female that belong to the same group (relevant to latest parturition in original group section).
+
+
+```{r Isolation dates count}
+
+#How many isolation dates for each original group 
+names()
+
+View(DC_PrePairingGroup)
+
+IsolationDates_OriginalGroup <- DC_PrePairingGroup %>% 
+  left_join(.,DC_IsolationDates) %>% 
+  left_join(., tblSex) %>% 
+  filter(Sex == "F")
+View(IsolationDates_OriginalGroup)
+
+
+IsolationDates_OriginalGroup_Count <- IsolationDates_OriginalGroup %>%
+  group_by(OriginalGroup) %>% 
+  summarize(Count = n_distinct(IsolationDate)) %>% 
+  ungroup()
+View(IsolationDates_OriginalGroup_Count)
+
+
+```
+
+King were only removed from queen treatment group, not from Sub treatment group. That means that at the time of separation NBF from sub treatment 
+
+```{r King Removal Dates}
+
+KingRemoval <- read.csv("KingRemovalDates_20240320.csv") %>% 
+  select(NatalColony,
+         KingRemovalDate) %>%
+  rename(OriginalGroup = NatalColony) %>% 
+  mutate(KingRemovalDate = dmy(KingRemovalDate)) %>% 
+  distinct() %>% 
+  filter(is.na(KingRemovalDate))
+
+View(KingRemoval)
+#5 groups have had no queen removed 
+
+#Normally sub from the sub treatment should not have had their queen reoved 
+
+```
+
+
+Query the latest parturition in the original group. That will be useful for sample selection.
+
+As written above there should be only one single delay between latest parturition and isolation for females for each distinct Original group
+
+```{r Latest Parturition dates}
+
+View(DC_IsolationDates)
+
+#How many Isolation dates per original group 
+IsolationDates
+View(DC_PrePairingGroup)
+
+#Last Parturition dates in group
+LastParturition_OriginalGroup <- DC_PrePairingGroup %>%
+  
+  #ADD SEX
+  left_join(., tblSex) %>% 
+  
+  #REMOVE MALES
+  #WE ARE ONLY INTERESTED IN LATEST PARTURITION IN GROUPS WHERE FEMALES WHERE TAKEN FROM
+  filter(Sex == "F") %>% 
+  
+  #DISTINCT GROUP
+  distinct(OriginalGroup) %>%
+  
+  #ADD ISOLATION DATES
+  #ONLY THE FEMALE DATE IS HERE OF INTEREST
+  left_join(.,DC_Info_F %>% 
+                          distinct(OriginalGroup,
+                                   ExperimentalGroup,
+                                   Treatment,
+                                   IsolationDate)) %>%
+  
+  #ADD LITTER INFO OF THE ORIGINAL GROUP 
+  left_join(., Litter_Info %>% 
+              filter(Sex == "F"), by = c("OriginalGroup" = "ParturitionColony")) %>% 
+  
+  #ONLY RETAIN LATEST PARTURITION
+  filter(ParturitionDate < IsolationDate) %>% 
+  group_by(OriginalGroup) %>% 
+  slice_max(ParturitionDate) %>% 
+  ungroup() %>% 
+  
+  #SELECT 
+  select(OriginalGroup,
+         ExperimentalGroup,
+         Treatment,
+         IsolationDate,
+         ParturitionDate) %>% 
+  
+  #RENAME 
+  rename(OriginalGroup_LastParturitionDate = ParturitionDate) %>% 
+  distinct() 
+
+View(LastParturition_OriginalGroup)
+
+
+#What is the delay between last parturition and isolation dates
+LastParturitionDelay <- LastParturition_OriginalGroup %>% 
+       mutate(Delay = OriginalGroup_LastParturitionDate - IsolationDate) %>% 
+  arrange(Delay)
+
+View(LastParturitionDelay)
+
+write.csv(LastParturitionDelay,"LastParturitionDelay_ToCheck_20240326.csv", row.names = FALSE)
+
+
+
+```
+
+
+## Treatment 
+
+
+```{r Treatment}
+
+#Original BS 
+DC_Females_OriginalBS <- DC_Females %>% 
+  
+  #ADD FIRST PARTURITION DATE
+  left_join(., DC_AnimalID_Static %>% 
+              select(AnimalID,
+                     FirstParturitionDate) %>% 
+              filter(FirstParturitionDate < "2022-01-01")) %>% 
+  
+  #ADD BREEDINGSTATUS
+  mutate(BS_Original = case_when(is.na(FirstParturitionDate) ~ "Helper", 
+                                 TRUE ~ "Breeder")) %>% 
+  select(AnimalID, 
+         BS_Original)
+View(DC_Females_OriginalBS)
+
+
+#Treatment
+DC_Treatment <- DC_Females %>% 
+  
+  #ADD EXPERIMENTAL GROUP 
+  left_join(., DC_ExperimentalGroup) %>% 
+  
+  #ADD ORIGINAL BS 
+  left_join(DC_Females_OriginalBS) %>% 
+  
+  #ADD BREED
+  group_by(ExperimentalGroup) %>% 
+  mutate(BF_Count = sum(BS_Original == "Breeder")) %>% 
+  ungroup() %>% 
+  
+  #ADD TREATMENT 
+  mutate(Treatment = case_when(BF_Count == 1 ~ "Queen",
+                               BF_Count == 0 ~ "Sub", 
+                               TRUE ~ "Problem")) %>% 
+  
+  #DISTINCT 
+  #treatment is a group identity 
+  distinct(ExperimentalGroup, 
+           Treatment) %>% 
+  filter(!is.na(ExperimentalGroup))
+View(DC_Treatment)
+#PPF009 has no treatment but that should eb solved after Channen has corrected table pairings 
+
+#Duplicate
+View(DC_Treatment %>% 
+       count(AnimalID))
+#PPF008 appears 2x because it appears in 2x Experimental group. Will be solved once Channen has corrected what I asked her to 
+
+
+
+```
+
+
+## Eviction 
+
+```{r Data}
+
+tblevictions_Corrected <- tblevictions %>% 
+  mutate(AnimalID = case_when(EvictionRef == 166 ~ "DRF015", 
+                              TRUE ~ AnimalID)) %>% 
+  #ADD COLONY CODES 
+  left_join(., tblColonyCodes)
+
+```
+
+
+```{r OrEe ID}
+
+#Evictor 
+DC_Evictor <- DC_AnimalID %>% 
+  inner_join(., tblevictions_Corrected, by=c("AnimalID" = "EvictorID")) %>%
+  #RETAIN ONLY EVICTOR AFTER EXPERIMENT START 
+  filter(DateOfEviction > "2022-01-01") %>% 
+  mutate(EvictionStatus = "Evictor") %>% 
+  select(AnimalID, 
+         DateOfEviction, 
+         EvictionStatus) %>% 
+  rename(EvictionDate = DateOfEviction) 
+
+
+#Evictee 
+DC_Evictee <- DC_AnimalID %>% 
+  inner_join(., tblevictions_Corrected , by=c("AnimalID" = "AnimalID")) %>%
+  mutate(EvictionStatus = "Evictee") %>% 
+  select(AnimalID, 
+         DateOfEviction, 
+         EvictionStatus) %>% 
+  rename(EvictionDate = DateOfEviction) 
+
+
+
+#Join Evictor and Evictee
+DC_EvictionInfo <- bind_rows(DC_Evictee, 
+                         DC_Evictor) %>% 
+  mutate(EvictionDate = ymd_hms(EvictionDate)) %>% 
+  mutate(EvictionDate = ymd(EvictionDate))
+View(DC_EvictionInfo)
+
+```
+
+
+```{r Dates}
+
+DC_EvictionDates <- DC_EvictionInfo %>% 
+  left_join(., tblevictions_Corrected %>% 
+              select(AnimalID, Colony)) %>% 
+  filter(!is.na(Colony)) %>% 
+  select(Colony, 
+         EvictionDate) %>% 
+  rename(ExperimentalGroup = Colony)
+
+
+```
+
+
+```{r Gestation status}
+
+
+#run next parturition info. Only give info for females that gave birth 
+Eviction_NextParturition_F <- DC_EvictionInfo %>% 
+  
+  #ADD STATIC 
+  #INCLUDES INFO THAT WILL BE REQUIRED FOR FUNCTION 
+  left_join(.,DC_AnimalID_Static) %>% 
+  
+  next_parturitioninfo(date = EvictionDate) 
+names(Eviction_NextParturition_F)
+
+
+
+#Get gestation status
+#Used gestation length of 88 to calculate trimester, 105 to -85 is conception
+Eviction_GestationStatus <- Eviction_NextParturition_F %>% 
+  
+  #GESTATION STATUS SEMESTER
+  gestationstatus(date = EvictionDate, gestationlength = 85, gestationlength2 = 105, gestationsplit = "trimester") %>% 
+  
+  select(AnimalID,
+         GestationStatus_Trimester) %>% 
+  
+  rename(Eviction_GS = GestationStatus_Trimester)
+
+```
+
+
+#Parturition info 
+
+The two experimental females gave birth in Tusker, Licher and Black Label. Co-breeding only occured in  
+
+```{r Individual level}
+
+#Females 
+#Males would need the parentage to be updates
+
+#Parturition info of DC females
+DC_Parturition_Info_All <- DC_Females %>% 
+  left_join(., Litter_Info)
+View(DC_Parturition_Info_All)
+names(DC_Parturition_Info_All)
+
+
+#Parturition post experiment start 
+DC_Parturition_Info_DC <- DC_Parturition_Info_All %>% 
+  left_join(., DC_PairingDates, by=c("AnimalID" = "AnimalID", "PairingColony" = "PairingColony")) %>% 
+  filter(ParturitionDate > PairingDate.y) %>% 
+  distinct()
+View(DC_Parturition_Info_DC)
+
+
+#First Parturition post experiment start
+#Would it be of any use to 
+DC_Parturition_Info_DCFirst <- DC_Parturition_Info_DC %>% 
+  group_by(AnimalID) %>% 
+  arrange(ParturitionDate) %>% 
+  slice_min(ParturitionDate) %>% 
+  ungroup()
+View(DC_Parturition_Info_DCFirst)
+
+
+```
+
+
+```{r Group level}
+
+
+#Groups in which 2 experimental females bred
+DC_MultipleBreeding <- DC_Parturition_Info_DCFirst %>% 
+  group_by(PairingColony) %>% 
+  mutate(BF_Count = n_distinct(AnimalID),
+         BF_SameGroup_Count = sum(PairingColony == ParturitionColony)) %>% 
+  ungroup() %>% 
+  filter(BF_Count > 1)
+View(DC_MultipleBreeding)
+
+
+#Gave birth in same group
+DC_Breeding_SameGroup <- DC_MultipleBreeding %>% 
+  filter(BF_SameGroup_Count == 2) %>% 
+  select(AnimalID) %>% 
+  left_join(., DC_Parturition_Info_DC)
+View(DC_Breeding_SameGroup)
+#Tusker, no eviction yet
+#Apparently co-breeding is possible
+
+  
+#Gave birth in different group 
+DC_Breeding_DifferentGroup <- DC_MultipleBreeding %>% 
+  filter(BF_SameGroup_Count == 1) %>% 
+    select(AnimalID) %>% 
+  left_join(., DC_Parturition_Info_DC)
+View(DC_Breeding_DifferentGroup)
+#Licher and Black Label 
+#But the second female gave birth in her eviction group 
+
+```
+
+
+# Abortion 
+
+I am not sure yet how I will incorporate these data 
+```{r Abortion}
+
+#Get abortion event from DB 
+Abortion <- con %>%
+  dbGetQuery ("SELECT * FROM user_philippev.LH_Abortion") %>% 
+  mutate(AbortionDate = ymd(AbortionDate))
+View(Abortion)
+
+
+#Abortion from DC females after start of experiment 
+DC_Abortion <- DC_Females %>%
+  left_join(., DC_PairingDates) %>% 
+  inner_join(.,Abortion) %>% 
+  #RETAIN ABORTION AFTER EXP START 
+  filter(AbortionDate > PairingDate) %>% 
+  rename(AbortionGroup = Colony)
+View(DC_Abortion)
+#Not sure what happened with RSF008, perhaps I need to integrate the preg check info
+
+
+# #Group where the abortion occured 
+# DC_Abortion_Membership <- DC_Abortion %>% 
+#   select(-Colony) %>% 
+#   membership(date = AbortionDate) %>% 
+#   rename(AbortionGroup = Colony)
+
+View(DC_Abortion_Membership)
+
+```
+
+#Death 
+
+```{r Date}
+names(DC_AnimalID_Static)
+
+DC_DeathDates <- DC_AnimalID %>% 
+  left_join(.,DC_AnimalID_Static %>% 
+              select(AnimalID,
+                     DeathDate))
+
+```
+
+#All relevant info 
+
+The code that leads to this is a bit messy at some point but it does work.
+
+A Manual correction is applied for Firestone SF006 that died giving birth to her first litter on the 20/12/2022, but for which no litter has been recorded
+
+```{r Individual}
+
+#add whether individual conceived in group  
+#add whether individual bred in group
+#In case two conceived add whether first conceiver
+#In case two bred add first breeder 
+#With this I can see whether the first breeder in the group was evicted 
+View(DC_ExperimentalGroup)
+DC_Info <- 
+  
+  #ADD ANIMALID 
+  DC_AnimalID %>% 
+  
+  #ADD SEX AND DOB
+  left_join(., DC_AnimalID_Static %>% 
+              select(AnimalID, 
+                     Sex, 
+                     BirthDate)) %>% 
+  
+  #ADD EXP GROUP
+  #CONTAINS PAIRING DATES
+  left_join(.,DC_ExperimentalGroup) %>%
+  
+  #ADD PRE-ISOLATION GROUP 
+  left_join(., DC_PrePairingGroup, by = c("AnimalID" = "AnimalID", "ExperimentalGroup" = "PairingColony" )) %>%
+  
+  #ADD KING REMOVAL DATE
+  left_join(., KingRemoval) %>% 
+  
+  #ADD PRE-ISOLATION GROUP LATEST PARTURITION 
+  left_join(., LastParturition_OriginalGroup %>% 
+              select(OriginalGroup,
+                     ExperimentalGroup,
+                     OriginalGroup_LastParturitionDate)) %>% 
+  
+  #ADD ISOLATION DATE
+  left_join(.,DC_IsolationDates, by = c("AnimalID" = "AnimalID", "ExperimentalGroup" = "PairingColony" )) %>%
+
+  
+  #ADD DEATHDATE
+  left_join(., DC_DeathDates) %>%
+  
+  #ADD LAST DATE
+  left_join(., LastDate %>% 
+              select(AnimalID,
+                     LastDate)) %>% 
+
+  #ADD EXPERIMENTAL UNIT 
+  arrange(StartDate,
+          ExperimentalGroup,
+          Sex) %>% 
+  
+  #ADD GROUP INDICES
+  #Using match and unique https://stackoverflow.com/questions/72574649/dplyrcur-group-id-by-order-of-appearance-rather-than-alphabetical-order; otherwise cur_group_id or group_indices put them in the alphabetic order.
+  mutate(ExperimentalUnit = match(ExperimentalGroup,
+                                  unique(ExperimentalGroup))) %>%
+  
+  #ADD TREATMENT
+  left_join(., DC_Treatment) %>%
+  
+  #ADD AGE AT ISOLATION 
+  mutate(Age = IsolationDate - BirthDate) %>% 
+  
+  #ADD  ORIGINAL BREEDING STATUS
+  #Only gives females, males are all breeders
+  left_join(.,DC_Females_OriginalBS) %>%
+
+  
+  #FIRST PARTURITION INFO
+  left_join(., DC_Parturition_Info_DCFirst %>% 
+              select(AnimalID, 
+                     ConceptionDate,
+                     ParturitionDate,
+                     ParturitionColony) %>% 
+              rename(FirstDCConceptionDate = ConceptionDate,
+                     FirstDCParturitionDate = ParturitionDate,
+                     FirstDCParturitionColony = ParturitionColony)) %>%
+
+  
+  #ADD FINAL BS
+  #Watch out can be a breeder and evictee
+  mutate(BS_Final = case_when(Sex == "M" ~ "Breeder",
+                              Sex == "F" & !is.na(FirstDCParturitionDate) ~ "Breeder",
+                               Sex == "F" & is.na(FirstDCParturitionDate) ~ "NonBreeder")) %>% 
+  
+  #ADD EVICTION DATE 
+  left_join(., DC_EvictionDates) %>% 
+
+  #ADD EVICTION STATUS
+  left_join(., DC_EvictionInfo %>% 
+              select(AnimalID, 
+                     EvictionStatus)) %>%
+  
+  #REPLACE NA
+  #To assign InGroup to male as males where never evicted
+  replace_na(list(EvictionStatus = "InGroup")) %>%
+  
+    #ADD CONCEPTION CATEGORY 
+  mutate(ConceptionCategory = case_when(FirstDCConceptionDate <= EvictionDate ~ "Conceived",
+                                        !is.na(FirstDCConceptionDate) & is.na(EvictionDate) ~ "Conceived",
+                                        TRUE ~ "NotConceived")) %>% 
+
+  
+  #ADD GESTATION STATE AT EVICTION 
+  left_join(., Eviction_GestationStatus) %>% 
+  
+  #ASSIGN STATUS TO MALE
+  mutate(BS_Original = case_when(Sex == "M" ~ "Breeder",
+                                 TRUE ~ BS_Original)) %>% 
+  
+  #RELEVEL 
+  mutate(Treatment = fct_relevel(Treatment, "Sub", "Queen"),
+         BS_Original = fct_relevel(BS_Original, "Helper", "Breeder"),
+         BS_Original2 = fct_relevel(BS_Original, "Breeder", "Helper"),
+         EvictionStatus = fct_relevel(EvictionStatus, "Evictor", "Evictee", "InGroup"),
+         EvictionStatus2 = fct_relevel(EvictionStatus, "Evictee", "Evictor", "InGroup")) %>% 
+  
+    #MANUAL CORRECTION FOR FIRESTONE SOF006 
+  mutate(FirstDCParturitionDate = case_when(AnimalID == "SOF006" ~ ymd("2022-12-22"),
+         TRUE ~ FirstDCParturitionDate)) %>% 
+  mutate (FirstDCConceptionDate = case_when(AnimalID == "SOF006" ~ FirstDCParturitionDate - 88,
+         TRUE ~ FirstDCConceptionDate)) %>% 
+  mutate (Eviction_GS = case_when(AnimalID == "SOF006" ~ "PreFirst",
+         TRUE ~ Eviction_GS)) %>% 
+  mutate (FirstDCParturitionColony = case_when(AnimalID == "SOF006" ~ "Firestone",
+         TRUE ~ FirstDCParturitionColony)) %>% 
+  
+  
+  #ADD ISOLATION PERIOD
+  mutate(IsolationPeriod = PairingDate - IsolationDate) %>% 
+  
+  #ADD EVICTION-PAIRING DELAY 
+  mutate(EvictionPairingDayDiff = EvictionDate - PairingDate) %>%
+  
+  #ADD CONCEPTION-PAIRING DELAY  
+  mutate(FirstConceptionPairingDayDiff = FirstDCConceptionDate - PairingDate) %>%
+  
+  #ADD CONCEPTION-EVICTION DELAY
+  mutate(FirstConceptionEvictionDayDiff = FirstDCConceptionDate - EvictionDate) %>% 
+  
+  #ADD PARTURITION-PAIRING DELAY
+  mutate(FirstParturitionPairingDayDiff = FirstDCParturitionDate - PairingDate) %>%  
+  
+  #ADD PARTURITION-EVICTION DELAY
+  mutate(FirstParturitionEvictionDayDiff = FirstDCParturitionDate - EvictionDate) %>% 
+  
+  #CREATE EVICTION CATEGORY 
+  mutate(Eviction_Cat = case_when(EvictionPairingDayDiff <= 21 ~ "Rapid",
+                                  EvictionPairingDayDiff >21 ~ "Slow",
+                                  TRUE ~ "None")) %>% 
+  
+  distinct()
+  
+
+write.csv(DC_Info,"DC_Info_20240326.csv",row.names = FALSE)
+
+View(DC_Info)
+
+names(Eviction_GestationStatus)
+
+
+```
+
+```{r DataCheck}
+
+#There are 80 entries in DC info
+#We should have 75 entries 3x75
+
+View(DC_Info %>% 
+       group_by(ExperimentalGroup) %>% 
+       mutate(Count = n()) %>% 
+       ungroup() %>% 
+       filter(Count != 3))
+
+```
+
+
+Separate relevant info by sex and add relevant info. Does compute difference between partners ID 
+
+```{r By Sex}
+
+names(DC_Info)
+
+#Females
+DC_Info_F <- DC_Info %>% 
+  
+  #RETAIN FEMALE
+  filter(Sex == "F") %>% 
+  
+  #ADD A CATEGORY FOR PLOTTING THAT SEPARATE Q AND SUB
+  #Will be useful for data exploration
+  mutate(BS_PlotCategory = case_when(BS_Original == "Helper" & Treatment == "Queen" ~ "Sub_Q",
+                                  BS_Original == "Helper" & Treatment == "Sub" ~ "Sub_S", 
+                                  TRUE ~ as.character(BS_Original))) %>% 
+  mutate(BS_PlotCategory = fct_relevel(BS_PlotCategory, "Sub_S", "Sub_Q", "Breeder")) %>% 
+  
+  #ADD PARTNER ID 
+  group_by(ExperimentalUnit) %>% 
+  mutate(PartnerID1 = lead(AnimalID),
+         PartnerID2 = lag(AnimalID)) %>%
+  ungroup() %>%
+  mutate(PartnerID = case_when(!is.na(PartnerID1) ~ PartnerID1,
+                               !is.na(PartnerID2) ~ PartnerID2,
+                               TRUE ~ "ToCheck")) %>% 
+  select(-PartnerID1,
+         -PartnerID2) %>% 
+  
+  #ADD PARTNER AGE
+  left_join(., DC_Info %>% 
+                select(AnimalID,
+                       Age) %>% 
+                rename(PartnerAge = Age), by =c("PartnerID" = "AnimalID")) %>% 
+  
+  
+  #ADD AGE DIFFERENCE 
+  mutate(AgeDiff = Age - PartnerAge) %>% 
+  
+  #ADD AGE DIFFERENCE CATEGORY 
+  mutate(AgeDiff_Cat = case_when(AgeDiff > 0 ~ "Older",
+                                 AgeDiff < 0 ~ "Younger")) %>% 
+  
+  
+  #RELEVEL FACTOR
+  mutate(Treatment = fct_relevel(Treatment, "Sub", "Queen"),
+         BS_Original = fct_relevel(BS_Original, "Helper", "Breeder"),
+         BS_Original2 = fct_relevel(BS_Original, "Breeder", "Helper"),
+         EvictionStatus = fct_relevel(EvictionStatus, "Evictor", "Evictee", "InGroup"),
+         EvictionStatus2 = fct_relevel(EvictionStatus, "Evictee", "Evictor", "InGroup"))
+
+View(DC_Info_F)
+
+
+#write csv
+write.csv(DC_Info_F,"DC_Info_F_20240326.csv",row.names = FALSE)
+
+
+#Males
+DC_Info_M <- DC_Info %>% 
+  filter(Sex == "M")
+
+
+```
+
+
+#Group info
+
+Generate a sampling category based on the data exploration performed in DC_DataExploration. SamplingCat is ultimately useful to select urine samples and data exploration
+
+When re running the code, I think I should incorporate it in DC_Info_urine_F. At the moment I have just written a csv that I am bringing at the beginning of sample selection
+
+```{r Sampling Cat}
+
+SamplingCat <- DC_Info_F %>% 
+  #RETAIN EVICTOR OR NO EVICTION BECAUSE SAMPLING CAT BASED ON EVICTOR
+  filter(EvictionStatus == "Evictor" | EvictionStatus == "InGroup") %>% 
+  group_by(ExperimentalGroup) %>% 
+  slice_head() %>% 
+  ungroup() %>% 
+  
+  #ADD A SAMPLE SELECTION CATEGORY 
+  #THIS IS BASED ON DATA EXPLORATION PERFORMED LATER IN THE CURRENT CODE
+  mutate(Sampling_Cat = case_when( Eviction_Cat == "Rapid" & Eviction_GS == "Conception" ~ "Rapid_Conc",
+                                   Eviction_Cat == "Rapid" & Eviction_GS == "PreFirstConception" | ExperimentalGroup == "Firestone" ~ "Rapid_PreFirst",
+                                   Eviction_Cat == "Rapid" & is.na(Eviction_GS) ~ "Rapid_None",
+                                   Eviction_Cat == "Slow" &  Eviction_GS == "Conception" ~ "Slow_Conc",
+                                   Eviction_Cat == "Slow" & Eviction_GS == "PreFirstConception" ~ "Slow_PreFirst",
+                                   Eviction_Cat == "Slow" & is.na(Eviction_GS) ~ "Slow_None", 
+                                   EvictionStatus == "InGroup" ~ "NoEviction")) %>% 
+  
+    select(ExperimentalGroup,
+           Sampling_Cat) %>% 
+  
+  #RELEVEL SAMPLING CATEGORY
+  mutate(Sampling_Cat = fct_relevel(Sampling_Cat, "Rapid_Conc", "Rapid_PreFirst", "Slow_Conc", "Slow_PreFirst", "Slow_None", "NoEviction")) %>% 
+  
+  arrange(Sampling_Cat)
+
+
+write.csv(SamplingCat, "SamplingCat_20240320.csv", row.names = FALSE)
+
+View(SamplingCat)
+```
+
+
+#Co-breeding 
+
+2 females breeding alonsgide each other, in parallel
+
+Can be done in future, would probably involve from to type of data
+
+
+#Breeding tolerance
+
+One breeding female tolerate the other, which doesn't breed
+
+Can be done in future, would probably involve from to type of data
+
+
+For group, I could add 
+1) Evictor BS_Original 
+2) Evictor ID?
+3) Evictee ID?
+
+```{r Group}
+
+names(DC_Info_F)
+#add whether an individual that bred in the group was evicted
+
+#Could add a column in DC_Info_F: Conceived in group Y/N; Produced litter in group Y/N
+
+names(DC_Info_F)
+
+DC_Info_Group <- DC_Info_F %>%
+  
+  #GROUP BY 
+  group_by(ExperimentalGroup) %>% 
+  
+  #ADD GROUP EVICTION STATUS
+  mutate(Group_EvictionStatus = case_when(sum(EvictionStatus == "Evictor") == 1 ~ "Eviction", 
+                                 sum(EvictionStatus == "Evictor") == 0 ~ "NoEviction",
+                                 TRUE ~ "Problem")) %>%
+  
+  #ADD BREEDER COUNT
+  mutate(BreederCount = sum(!is.na(FirstDCParturitionDate))) %>%
+  
+  #ADD WHETHER THERE HAS BEEN 2 FEMALES 
+  mutate(CoBreeding = sum(!is.na(FirstDCParturitionDate) & FirstDCParturitionColony == ExperimentalGroup)) %>% 
+    
+    #ADD GROUP EARLIER FIRST PARTURITION 
+    mutate(Group_EarlierFirstParturitionDate = min(FirstDCParturitionDate, na.rm = TRUE)) %>% 
+    
+    #ADD GROUP LATEST FIRST PARTURITION 
+    mutate(Group_LaterFirstParturitionDate = max(FirstDCParturitionDate, na.rm = TRUE)) %>% 
+    mutate(Group_LaterFirstParturitionDate = case_when( Group_EarlierFirstParturitionDate != Group_LaterFirstParturitionDate ~ Group_LaterFirstParturitionDate)) %>% 
+  
+  #UNGROUP
+  ungroup() %>% 
+  
+  #ADD GROUP EARLIER FIRST CONCEPTION DATE
+  mutate(Group_EarlierFirstConceptionDate = Group_EarlierFirstParturitionDate - 88) %>% 
+  
+  #ADD GROUP LATER FIRST CONCEPTION DATE
+  mutate(Group_LaterFirstConceptionDate = Group_LaterFirstParturitionDate - 88) %>% 
+  
+  #ADD EARLIER FIRST CONCEPTION-PAIRING DELAY
+  mutate(Group_EarlierFirstConceptionPairing_DayDiff = Group_EarlierFirstConceptionDate - PairingDate) %>% 
+  
+  #ADD EARLIER FIRST CONCEPTION-PAIRING DELAY
+  mutate(Group_LaterFirstConceptionPairing_DayDiff = Group_LaterFirstConceptionDate - PairingDate) %>% 
+  
+  #ADD EVICTION-PAIRING DAY DIFF
+  mutate(EvictionPairingDayDiff = EvictionDate - PairingDate) %>% 
+  
+  #ADD EARLIER FIRST PARTURIITION-PAIRING DAY DIFF
+  mutate(Group_EarlierFirstParturitionPairing_DayDiff = Group_LaterFirstParturitionDate - PairingDate) %>% 
+  
+  #ADD LATER FIRST PARTURIITION-PAIRING DAY DIFF
+  mutate(Group_LaterFirstParturitionPairing_DayDiff = Group_LaterFirstParturitionDate - PairingDate) %>% 
+  
+  
+  #ADD EVICTION CATEGORY 
+  mutate(EvictionCategory = case_when(EvictionPairingDayDiff > 21 ~ "Slow",
+                                      TRUE ~ "Rapid")) %>% 
+
+  #ADD SAMPLING CAT
+  left_join(., SamplingCat) %>% 
+  
+  #SELECT 
+  select(Sampling_Cat, 
+         ExperimentalGroup,
+         Treatment,
+         IsolationDate,
+         PairingDate,
+         EvictionDate,
+         Group_EarlierFirstConceptionDate,
+         Group_LaterFirstConceptionDate,
+         Group_EarlierFirstParturitionDate,
+         Group_LaterFirstParturitionDate,
+         EvictionPairingDayDiff,
+         Group_EarlierFirstConceptionPairing_DayDiff,
+         Group_LaterFirstConceptionPairing_DayDiff,
+         Group_EarlierFirstParturitionPairing_DayDiff,
+         Group_LaterFirstParturitionPairing_DayDiff,
+         Group_EvictionStatus,
+         EvictionCategory,
+         BreederCount,
+         CoBreeding) %>% 
+    distinct()
+View(DC_Info_Group)
+
+
+#Guiness and Devils Peak give problem
+
+View(DC_Info_Group)
+
+write.csv(DC_Info_Group,"DC_Info_Group_20240326.csv",row.names = FALSE)
+
+```
+
+
+
+#Raw data
+
+For all data set, data start 3 months before the beginning of the experiment
+
+##BM 
+
+```{r Raw}
+
+#Male weight
+DC_Weight <- DC_AnimalID %>% 
+  left_join(.,tblWeights) %>% 
+  left_join(., DC_Info %>%
+              select(AnimalID, 
+                     IsolationDate)) %>%
+  #REMOVE WEIGHT MORE THAN 3 MONTHS BEFORE ISOLATION
+  filter(WeightDate > IsolationDate - 90) %>% 
+  select(-IsolationDate)
+View(DC_Weight)
+
+
+#Female
+DC_Weight_F <- DC_Weight %>% 
+  left_join(.,tblSex) %>% 
+  filter(Sex == "F")
+View(DC_Weight_F)
+
+
+#Male
+DC_Weight_M <- DC_Weight %>% 
+ left_join(.,tblSex) %>% 
+  filter(Sex == "M")
+
+```
+
+
+
+##Focal
+
+Should all be stored new import way. 
+Should be gotten out of focal pipeline. This pipeline must be finalized 
+
+```{r Raw}
+
+```
+
+
+##Scan data
+
+Should all be stored new import way. 
+Should be gotten out of scan pipeline. This pipeline must be finalized 
+
+```{r Raw}
+
+```
+
+
+##Urine 
+
+```{r Raw}
+
+#All Urine 
+#Collected within 3 months of isolation
+DC_Urine <- DC_Info %>%
+  select(AnimalID, 
+         Sex, 
+         IsolationDate) %>% 
+  left_join(.,Urine_Collected) %>% 
+  
+  #KEEP SAMPLES 150 days before exp start
+  filter(UrineDate > IsolationDate - 150) %>% 
+  
+  
+  distinct()
+
+View(DC_Urine)
+#3418
+
+View(DC_Urine %>% 
+       distinct(UrineNumber))
+#3323 Urine Number
+
+
+#Female Urine
+DC_Urine_F <- DC_Urine %>% 
+  filter(Sex == "F")
+View(DC_Urine_F)
+#2922
+names(DC_Urine_F)
+
+#write csv
+write.csv(DC_Urine_F, "DC_Urine_F_20240320.csv", row.names = FALSE)
+
+#Male Urine 
+DC_Urine_M <- DC_Urine %>% 
+  left_join(., tblSex) %>% 
+  filter(Sex == "M")
+
+
+
+```
+
+
+##Plasma 
+
+```{r Raw}
+
+#All Plasma 
+#Collected within 3 months of isolation
+DC_Plasma <- DC_AnimalID %>% 
+  left_join(.,Plasma_Collected) %>% 
+  left_join(., DC_IsolationDates) %>% 
+  filter(PlasmaDate > IsolationDate - 90)
+View(DC_Plasma)
+
+#Female Plasma
+DC_Plasma_F <- DC_Plasma %>% 
+  left_join(., tblSex) %>% 
+  filter(Sex == "F")
+
+#Male Plasma 
+DC_Plasma_M <- DC_Plasma %>% 
+  left_join(., tblSex) %>% 
+  filter(Sex == "M")
+```
+
+
+#Dates 
+
+Done 
+
+Isolation Dates: DONE
+Pairing Dates: DONE
+Eviction Dates: DONE 
+Urine Dates: DONE
+Plasma Date: DONE
+
+Focal Dates
+Scan Dates
+
+
+
+
+```{r Reformatting}
+
+#Isolation Dates 
+Date_Isolation_ToAdd <- DC_IsolationDates %>% 
+  mutate(DateType = "Isolation") %>% 
+  rename(Date = IsolationDate)
+View(Date_Isolation_ToAdd)
+#75 correct
+
+
+#Pairing Dates
+Date_Pairing_ToAdd <- DC_PairingDates %>% 
+  mutate(DateType = "Pairing") %>% 
+  rename(Date = PairingDate)
+View(Date_Pairing_ToAdd)
+#75 correct
+
+#Eviction Dates 
+Date_Eviction_ToAdd <- DC_EvictionDates %>%
+  mutate(DateType = "Eviction") %>% 
+  rename(Date = EvictionDate)
+View(Date_Eviction_ToAdd)
+#22 correct
+
+#Urine Dates 
+Date_Urine_ToAdd <- DC_Urine %>%
+  select(AnimalID,
+         UrineDate) %>% 
+  mutate(DateType = "Urine") %>% 
+  rename(Date = UrineDate)
+View(Date_Urine_ToAdd)
+#3418
+
+#Plasma Dates 
+Date_Plasma_ToAdd <- DC_Plasma %>%
+  select(AnimalID,
+         PlasmaDate) %>% 
+  mutate(DateType = "Plasma") %>% 
+  rename(Date = PlasmaDate)
+```
+
+
+```{r Merge }
+
+#Must add King removal after DS correction 
+#Must add last parturition 
+
+DC_Dates <- bind_rows(Date_Isolation_ToAdd,
+                      Date_Pairing_ToAdd,
+                      Date_Eviction_ToAdd,
+                      Date_Urine_ToAdd,
+                      Date_Plasma_ToAdd) %>% 
+  distinct() %>% 
+  select(AnimalID,
+         Date,
+         DateType)
+View(DC_Dates)
+#3818 dates with distinct 
+
+
+#Females dates
+DC_Dates_F <- DC_Dates %>% 
+  filter(AnimalID %in% DC_Info_F$AnimalID)
+View(DC_Dates_F)
+
+```
+
+
+## Activation status
+
+will only be available after hormone analyses
+
+```{r}
+
+```
+
+
+## Gestation status
+
+```{r}
+
+#run next parturition info. Only give info for females that gave birth 
+DC_NextParturition_F <- DC_Dates_F %>% 
+  
+  #ADD STATIC 
+  #INCLUDES INFO THAT WILL BE REQUIRED FOR FUNCTION 
+  left_join(.,DC_AnimalID_Static) %>% 
+  
+  next_parturitioninfo()
+View(DC_NextParturition_F)
+#only gets info for females that gave birth 
+#2275
+
+args(next_parturitioninfo)
+
+
+#Get gestation status
+IB_GestationStatus_Trimester <- 
+  
+  DC_NextParturition_F %>% 
+  
+  #GESTATION STATUS SEMESTER
+  gestationstatus(date = Date,gestationsplit = "trimester") %>% 
+  
+  distinct(AnimalID,
+         DateType,
+         Date,
+         NextParturition_ParturitionDayDiff,
+         GestationStatus_Trimester)
+View(IB_GestationStatus_Trimester)
+
+
+#DC_Dates with gestation status
+DC_Dates_F_GestStat <- DC_Dates_F %>% 
+  left_join(.,IB_GestationStatus_Trimester) %>% 
+  replace_na(list(GestationStatus_Trimester = "NotPregnant")) %>% 
+  distinct(AnimalID,
+           Date,
+           DateType,
+           GestationStatus_Trimester)
+View(DC_Dates_F_GestStat)
+
+
+View(DC_Dates_F_GestStat %>% 
+       group_by(AnimalID,
+                Date) %>% 
+       mutate(Count = n()) %>% 
+       ungroup() %>% 
+       filter(Count >1) %>% 
+       arrange(AnimalID,Date))
+
+View(DC_Dates_F)
+
+
+```
+
+##Membership 
+
+```{r}
+
+DC_Membership <- DC_Dates %>% 
+  membership()
+View(DC_Membership)
+
+```
+
+
+##Closest weight
+
+I must have a look whether closest weight before takes into account weight that were collected on the date of interest. In our case (Isol, Pair, Eviction), that would be perfectly fine, even better. Tweak the functions accordingly (DC_DMRfunctions)
+
+
+```{r}
+
+DC_ClosestWeight_B <- DC_Dates %>% 
+  add_closestweight_before() %>% 
+  mutate(WeightDiff_Type = "Before") %>% 
+  rename(Weight_DayDiff = ClosestWeightDayDiff_Before,
+         Weight = ClosestWeight_Before)
+View(DC_ClosestWeight_B)
+
+
+DC_ClosestWeight_BA <- DC_Dates %>% 
+  add_closestweight() %>% 
+  mutate(WeightDiff_Type = "BeforeAfter") %>% 
+  rename(Weight_DayDiff = ClosestWeightDayDiff,
+         Weight = ClosestWeight)
+
+
+DC_ClosestWeight_A <- DC_Dates %>% 
+  add_closestweight_after() %>% 
+  mutate(WeightDiff_Type = "After") %>% 
+  rename(Weight_DayDiff = ClosestWeightDayDiff_After,
+         Weight = ClosestWeight_After)
+
+#Merge all weight 
+
+DC_ClosestWeight <- bind_rows(DC_ClosestWeight_B,
+                              DC_ClosestWeight_BA,
+                              DC_ClosestWeight_A)
+
+View(DC_ClosestWeight)
+
+
+#write csv
+write.csv(DC_ClosestWeight,"DC_ClosestWeight_20240320.csv",row.names = FALSE)
+
+
+
+####################################################DC 
+
+#Dates in DC_Dates without weight
+
+#Should check weight that are not taken on time 
+
+#Pivot longer
+
+```
+
+
+#Dynamic data
+
+##Urine 
+
+Prepare a file upon which urine samples can be selected (and perhaps analysed)
+
+Experimental Group
+AnimalID
+Sex
+Treatment
+EvictionStatus
+IsolationDate
+PairingDate
+EvictionDate
+FirstParturitionDate
+NextParturitionDate: Check where I could get it 
+Urine Date
+UrineID
+
+Compute all relevant differences when teh data set is ready 
+
+```{r Data}
+
+View(DC_Info)
+View(DC_Info_Urine)
+
+#Only DRM006 should have duplicated samples as it has been used twice 
+
+DC_Info_Urine <- DC_Info %>%
+  
+  #ADD SAMPLING CAT
+  left_join(DC_Info_Group %>% 
+              select(ExperimentalGroup,
+                     Sampling_Cat)) %>% 
+  
+  #ADD URINE 
+  #3468
+  left_join(DC_Urine %>% 
+              select(AnimalID,
+                     UrineDate,
+                     UrineNumber,
+                     UrineDelay,
+                     VolumeCollected)) %>% 
+  
+  #ADD NEXT PARTURITION INFO 
+  #3468
+  left_join(.,DC_NextParturition_F %>% 
+              filter(DateType == "Urine") %>% 
+              select(AnimalID,
+                     Date,
+                     NextParturition_ParturitionDate,
+                     NextParturition_ParturitionColony,
+                     NextParturition_IndividualConceptionCount_Total,
+                     NextParturition_IndividualConceptionCount_Colony) %>%
+              #RENAME
+              rename(NextLitter_IndCount_Colony = NextParturition_IndividualConceptionCount_Colony,
+                     NextLitter_IndCount_Total = NextParturition_IndividualConceptionCount_Total), by=c("AnimalID" = "AnimalID",
+                                                 "UrineDate" = "Date")) %>% 
+  
+  #ADD GESTATION STATUS 
+  #3556 meaning some animals may have more than gestation status at a given date 
+  left_join(., DC_Dates_F_GestStat %>% 
+              filter(DateType == "Urine"), by=c("AnimalID" = "AnimalID",
+                                                 "UrineDate" = "Date")) %>% 
+  
+  
+  #ADD URINE KING REMOVAL
+  mutate(UrineKingRemoval_DayDiff = UrineDate - KingRemovalDate) %>% 
+  
+  #ADD URINE LATEST QUEEN PARTURITION ORIGINAL GROUP 
+  mutate(UrineLastParturitionOirginalGroup_DayDiff = UrineDate - OriginalGroup_LastParturitionDate) %>% 
+  
+  #ADD URINE ISOLATION DAY DIFF 
+  mutate(UrineIsol_DayDiff = UrineDate - IsolationDate) %>% 
+  
+  #ADD URINE PAIRING DAY DIFF 
+  mutate(UrinePairing_DayDiff = UrineDate - PairingDate) %>% 
+  
+  #ADD URINE EVICTION  DAY DIFF
+  mutate(UrineEviction_DayDiff = UrineDate - EvictionDate) %>%
+  
+  #ADD URINE FIRST CONCEPTION DAY DIFF 
+  mutate(UrineFirstConception_DayDiff = UrineDate - FirstDCConceptionDate) %>% 
+  
+  #ADD URINE PARTURITION DAY DIFF
+  mutate(UrineParturition_DayDiff = UrineDate - NextParturition_ParturitionDate) %>% 
+  
+  #SELECT RELEVANT INFO 
+  select(Sampling_Cat,
+         ExperimentalGroup,
+         ExperimentalUnit,
+         AnimalID,
+         Treatment,
+         Sex,
+         BS_Original,
+         EvictionStatus,
+         EvictionDate,
+         UrineKingRemoval_DayDiff,
+         UrineLastParturitionOirginalGroup_DayDiff,
+         UrineIsol_DayDiff,
+         UrinePairing_DayDiff,
+         UrineEviction_DayDiff,
+         UrineFirstConception_DayDiff,
+         NextLitter_IndCount_Total,
+         NextLitter_IndCount_Colony,
+         UrineParturition_DayDiff,
+         GestationStatus_Trimester,
+         UrineDate,
+         UrineNumber) %>% 
+  distinct() %>% 
+  
+  #MANUAL CORRECTION FOR FIRESTONE FEMALE SOF006 
+  #DIED ON THE APPROXIMATE DOB
+  mutate(DOP = case_when(AnimalID == "SOF006" ~ ymd("2022-12-20"))) %>% 
+  
+  mutate(UrineParturition_DayDiff = case_when(AnimalID == "SOF006" ~ UrineDate - DOP,
+                                                        TRUE ~ UrineParturition_DayDiff)) %>% 
+  
+  select(-DOP)
+
+View(DC_Info_Urine)
+View(DC_Urine)
+#3350 
+#DC_Urine had 3418 
+#The diff is probably due to samples in DC_Urine being collected on the day animals changed group
+#But in term of the number of distinct urine sample that is the same 
+#where does the difference come from 
+
+
+
+View(DC_Urine %>% 
+       group_by(UrineNumber) %>% 
+       mutate(Count = n()) %>% 
+       ungroup() %>% 
+       filter(Count>1))
+#Probably samples that were taken on the day animals changed group
+
+
+
+View(DC_Info_Urine %>% 
+       distinct(UrineNumber))
+
+View(DC_Urine %>% 
+       distinct(UrineNumber))
+#Basically same number than Urine DC so no sample has been lost in the process and I can proceed with selection
+
+
+
+names(DC_NextParturition_F)
+names(Litter_Info)
+IndividualParturitionCount_Colony
+
+
+####################################Duplicated
+
+#Duplicated samples
+Urine_Duplicated <- DC_Info_Urine %>% 
+  group_by(UrineNumber, AnimalID) %>% 
+  summarize(Count = n()) %>% 
+  ungroup() %>% 
+  filter(Count > 1)
+View(Urine_Duplicated)
+#Only DRM006 is duplicated 
+#Makes sense since the animal has been used 2x
+
+View(DC_Info_Urine %>% 
+       filter(UrineNumber %in% Urine_Duplicated$UrineNumber))
+
+
+##############################Missing samples
+
+anti_join(DC_Urine, DC_Info_Urine)
+#All good
+
+
+##############################By sex
+
+#Female
+DC_Info_Urine_F <- DC_Info_Urine %>% 
+       filter(Sex == "F")
+View(DC_Info_Urine_F )
+
+write.csv(DC_Info_Urine_F,"DC_Info_Urine_F_20240326.csv",row.names = FALSE)
+
+
+#Male
+DC_Info_Urine_M <- DC_Info_Urine %>% 
+       filter(Sex == "M")
+
+names(DC_NextParturition_F)
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+#Urine status pipeline
+
+#Plasma satus pipeline
+
+#Hormone levels pipeline
+
+
+
+
+
+

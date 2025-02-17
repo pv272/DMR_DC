@@ -1,0 +1,460 @@
+---
+title: "Untitled"
+output: html_document
+date: "2024-02-06"
+---
+
+#Package
+
+```{r}
+
+library(tidyverse)
+
+```
+
+
+#General 
+
+1) In firestone the breeding female ORF005 died when she gave birth (after she had evicted ORF018). 
+
+After this the male DRM006 was used to found Kasteel. This has consequences for sample selection. 
+
+```{r Data}
+
+#Urine info 
+DC_Info_Urine_F <- read.csv("DC_Info_Urine_F_20240214.csv") %>% 
+  mutate(EvictionDate = ymd(EvictionDate,
+         UrineDate = ymd(UrineDate)))
+  
+names(DC_Info_Urine_F )
+
+
+#Current sample inventory _Inventory
+Inventory <- 
+```
+
+
+#Sample lag 
+
+Normally female should have been sampled approximately once a week during the experiment. 
+
+SOF001 from Corbeau was not sampled for 46 days 
+ORF017 from Wicklow was not sampled for 45 days
+VGF002 from Wicklow was not sampled for 34 days 
+
+
+
+```{r}
+
+names(DC_Info_Urine_F)
+
+SampleLag <- DC_Info_Urine_F %>%
+  filter(UrinePairing_DayDiff >= 0, 
+         EvictionStatus == "Evictee" & UrineEviction_DayDiff <= 10 | EvictionStatus %in% c("InGroup", "Evictor")) %>% 
+  group_by(AnimalID) %>% 
+  mutate(LagUrineDate = lag(UrineDate)) %>% 
+  ungroup() %>% 
+  mutate(LastSampleDelay = UrineDate - LagUrineDate) %>% 
+  filter(!is.na(LastSampleDelay)) %>% 
+  arrange(desc(LastSampleDelay))
+
+View(SampleLag)
+
+
+View((DC_Info_Urine_F) %>% 
+       filter(ExperimentalGroup == "Corbeau"))
+
+```
+
+
+
+
+
+#Question 1: 
+
+Determine differences between BF and NBF when there is no breeding opportunity and determine whether ovulation occurs 
+
+Take 1 sample after two weeks 
+Take last 2 samples before pairing 
+
+3 samples per female = 156 samples 
+
+
+```{r Isolation}
+names(DC_Info_Urine_F)
+
+#two weeks 
+Isol_2W <- DC_Info_Urine_F %>% 
+  filter(UrineIsol_DayDiff >= 14) %>% 
+  group_by(AnimalID) %>% 
+  slice_min(UrineIsol_DayDiff) %>% 
+  ungroup()
+View(Isol_2W)
+#50 samples all good
+
+
+#Pre-pairing
+#In the worse case I could only get the last sample before pairing
+Isol_PrePair <- DC_Info_Urine_F %>% 
+  filter(UrinePairing_DayDiff <= 0) %>% 
+  group_by(AnimalID) %>% 
+  slice_max(UrineIsol_DayDiff, n=2) %>% 
+  ungroup()
+View(Isol_PrePair)
+
+#Check for duplicates
+View(Isol_PrePair %>% 
+       group_by(AnimalID) %>% 
+       mutate(Count = n_distinct(UrineNumber)) %>% 
+       ungroup)
+#ERF002 from Leffe has 2 samples on a given day, but one of them must be wrong because they have been collected almost at the same time. Check side label and only take the first and correct 
+
+Sel_Isol <- bind_rows(Isol_2W,
+                      Isol_PrePair)
+View(Sel_Isol)
+#150 samples
+
+```
+
+
+```{r Post paring}
+
+#Samples that were collected on the day of eviction
+#Have asked the project if they should be considered pre or post eviction
+#For now I assume that they are pre-eviction
+EvictionSample <- DC_Info_Urine_F %>% 
+  filter(UrineEviction_DayDiff == 0)
+
+write.csv(EvictionSample, "EvictionSample_ToCheck_20240215.csv", row.names = FALSE)
+#Awaiting answer
+
+
+#Post pairing samples 
+Sel_PostPair <- DC_Info_Urine_F %>% 
+  filter(UrinePairing_DayDiff > 0, 
+         UrinePairing_DayDiff <= 10, 
+         UrineEviction_DayDiff <= 0 | is.na(UrineEviction_DayDiff))
+View(Sel_PostPair)
+#149 samples
+
+
+#Samples pre individuals 
+PostPair_Count <- Sel_PostPair %>% 
+  group_by(ExperimentalGroup, 
+           AnimalID) %>% 
+  summarize(Count = n_distinct(UrineNumber)) %>% 
+  ungroup()
+View(PostPair_Count)
+#Between 1 and 6 samples per individual 
+
+
+View(anti_join(DC_Info_F, PostPair_Count))
+#The only sample that is missing is from Ashai where eviction occured on day 0
+
+View(DC_Info_F)
+
+```
+
+Pre-Eviction samples not accounted for in post-pairing samples. I have opted for 16 days pre-pairing.
+
+```{r Pre-Eviction }
+
+#Pre-Eviction
+Sel_PreEviction <- DC_Info_Urine_F %>%
+  #REMOVE SAMPLES ALREADY COUNTED IN POST PAIRING
+  filter(!UrineNumber %in% Sel_PostPair$UrineNumber) %>% 
+  #FILTER
+  filter(UrinePairing_DayDiff > 0, 
+         UrineEviction_DayDiff <= 0,
+         UrineEviction_DayDiff >= -16) # the number used here is mostly important for the slow eviction where sampling was not that frequent. 
+
+View(PreEviction)
+#10 days =  32 samples
+#12 days = 34 samples
+#14 days =  35 samples
+#16 days =  42 samples between 2 and 6 samples per individual at the excpetion of SOF001 that has no samples
+#18 days =  42 samples
+#20 days =  44 samples
+
+
+PreEviction_Count <- PreEviction %>% 
+  group_by(Sampling_Cat,
+           ExperimentalGroup,
+           AnimalID) %>% 
+  summarize(Count = n_distinct(UrineNumber)) %>% 
+  ungroup()
+View(PreEviction_Count)
+#Samples from evictor SOF001 in Corbeau (Slow_Conc) are missing. I suspect it is because eviction occurred really late. Weirdly there is no samples between 184 and 230 days post pairing
+
+
+#Ask the project to ask the reason 
+SOF001 <- DC_Info_Urine_F %>% 
+  filter(AnimalID == "SOF001")
+write.csv(SOF001, "SOF001_Urine.csv", row.names = FALSE)
+
+
+#View the samples gathered for slow eviction 
+View(PreEviction %>% 
+       filter(Sampling_Cat %in% c("Slow_Conc","Slow_PreFirst","Slow_None")) %>% 
+       arrange(ExperimentalGroup, AnimalID))
+
+```
+
+No samples has been collected post-eviction yet so no need remove samples collected before
+
+```{r Post eviction}
+
+#First sample post eviction
+PostEviction_1 <- DC_Info_Urine_F %>%
+  #FILTER
+  filter(UrineEviction_DayDiff > 0) %>% 
+  group_by(AnimalID) %>% 
+  slice_min(UrineEviction_DayDiff) %>% 
+  ungroup()
+View(PostEviction_1)
+#All samples have been collected within 2 days of eviction 
+#However, only 43 females meaning that 7 are missing 
+
+#Animals that lack a post-eviction sample 
+PostEviction_MissingID <- DC_Info_F %>% 
+  select(ExperimentalGroup, 
+         AnimalID, 
+         BS_Original,
+         EvictionStatus, 
+         DeathDate,
+         EvictionDate) %>% 
+  left_join(., SamplingCat) %>% 
+  relocate(Sampling_Cat) %>% 
+  anti_join(.,PostEviction_1)
+View(PostEviction_MissingID )
+#Samples are missing from the 3 females where there has been no eviction 
+#VGF002 is missing but it seems because she died on the day of eviction so normal there is no sample
+
+
+#First sample after 7 days post eviction
+#I could equally go for 10 days. Let's have a thought what is best
+PostEviction_14 <- DC_Info_Urine_F %>%
+  #FILTER
+  filter(UrineEviction_DayDiff >= 14) %>% 
+  group_by(AnimalID) %>% 
+  slice_min(UrineEviction_DayDiff) %>% 
+  ungroup()
+View(PostEviction_14)
+#All samples within 9 days except Darling brew wirth 13 and 15 days 
+#42 individuals so one more missing as after 1 day 
+
+Post14_Count <- PostEviction_14 %>% 
+  group_by(Sampling_Cat,
+           ExperimentalGroup,
+           AnimalID) %>% 
+  summarize(Count = n_distinct(UrineNumber)) %>% 
+  ungroup()
+View(Post14_Count )
+  
+Sel_PostEviction <- bind_rows(PostEviction_1, 
+                              PostEviction_14)
+View(Sel_PostEviction)
+
+```
+
+
+
+#Activation-Pregnancy samples
+
+All samples collected between 100 days and 80 days to determine:
+
+- Reproductive activation of some females
+- hormone profile of early gestation. 
+- Effect of presence of other female on gestation profile of early gestation
+
+
+We are only missing sample of one gestation, evictor from Guiness where sampling seem to have been stopped before the first succesful conception
+
+```{r First conception}
+
+View(DC_Info_Urine_F)
+
+#Are there evictee that gave birth within 100 days of eviction 
+View(DC_Info_F %>% 
+  filter(EvictionStatus == "Evictee"))
+
+Sel_FirstConc <- DC_Info_Urine_F %>% 
+  #REMOVE BITBURGER QUEEN THAT GOT PREGNANT AFTER EVICTION
+  filter(AnimalID != "DRF004") %>% 
+  #REMOVE SAMPLES POST-PAIRING  
+  filter(!UrineNumber %in% Sel_PostPair$UrineNumber) %>% 
+  #REMOVE SAMPLES PRE-EVICTION 
+  filter(!UrineNumber %in% Sel_PreEviction$UrineNumber) %>% 
+  #REMOVE SAMPLES POST-EVICTION
+  filter(!UrineNumber %in% Sel_PostEviction$UrineNumber) %>% 
+  #RETAIN FIRST LITTER 
+  filter(NextLitter_IndCount_Colony == 1) %>%               
+  #FILTER SAMPLES WITHIN TIME RANGE NEEDED 
+  filter(NextParturition_ParturitionDayDiff >=- 100,
+         NextParturition_ParturitionDayDiff <= -80)
+View(Sel_FirstConc)
+#146 samples 
+
+#Count of samples
+Sel_FirstConc_Count <- Sel_FirstConc %>% 
+  group_by(Sampling_Cat,
+           ExperimentalGroup,
+           EvictionStatus,
+           AnimalID) %>% 
+  summarize(Count = n_distinct(UrineNumber)) %>% 
+  ungroup()
+View(Sel_FirstConc_Count)
+#Seems that evictor from Guiness has no samples RRF008, no samples for almost 90 days around eviction 
+
+View(DC_Info_F)
+
+```
+
+
+#Reproductive activation
+
+All females that were evicted early did not successfully conceive in their group 
+
+Rapid_Conc: 
+
+- All samples of evictor are already covered 
+
+- All samples of evictees are already covered for If a female has not activated before eviction she is unlikely to ovulate in the absence of a male. In the worse case we could select a few samples post eviction or before the end of the experiment 
+
+
+Rapid_Pre: 
+
+- For evictor, the date of activation could be anytime until the first successful conception. Take one sample every 21 days from paring until successful conception and then refine. 
+
+- All samples of evictees are already covered for If a female has not activated before eviction she is unlikely to ovulate in the absence of a male. In the worse case we could select a few samples post eviction or before the end of the experiment 
+
+Slow_Conc:
+
+- For evictor and evictee, the date of activation could be anytime until the first successful conception. Take one sample every 21 days from paring until successful conception and then refine. 
+
+
+Slow_Pre
+
+- For evictor and evictee, the date of activation could be anytime until the first successful conception. Take one sample every 21 days from paring until successful conception and then refine.  
+
+- For evictor one may wonder whether one wants to analyse past eviction if we think it is quite likely they activated before
+
+
+No eviction
+
+- all females gave birth. Take one sample every 21 days until conception and then refine.  
+
+
+Keep in mind that I have all samples from 100 til 80 days pre-first parturition 
+```{r}
+
+names(DC_Info_Urine_F)
+
+View(DC_Info_Urine_F)
+
+View(DC_Info_F)
+View(SamplingCat)
+
+#retain samples until conception of first litter 
+#Take one sample every three week and then refine
+#retain samples of ORF017 that is the only evictor that had not succesfully conceived at the 
+
+RA_Prep <- DC_Info_Urine_F %>%
+  
+  #RETAIN ALL SAMPLES BETWEEN PAIRING AND FIRST SUCCESSFULL CONCEPTION
+      filter(UrinePairing_DayDiff > 0,
+         UrineFirstConception_DayDiff <= 0 | AnimalID == "ORF017",  #because ORF017 in Wicklow has not succesfully conceived when samples were shipped
+         AnimalID != "DRF004") %>%  #evictee from BitBurger that got preg after eviction
+  
+  #DIVIDE 21
+  mutate(Div21 = as.integer(UrinePairing_DayDiff/21),
+         Div21_1 = floor(Div21),
+         Remainder21 = as.integer(UrinePairing_DayDiff) %% 21) %>% 
+  
+  #LAG 
+  group_by(AnimalID) %>% 
+  mutate(Lag = lag(Remainder21),
+         Lag_UrineNumber = lag(UrineNumber)) %>% 
+  ungroup()
+View(RA_Prep)
+
+
+RA_Prep2 <- RA_Prep %>% 
+  
+  #RETAIN ONLY FIRST SAMPLE OF EACH 21 DAYS PERIOD
+  #it also show last sample of previous 21 days period 
+  group_by(AnimalID, 
+           Div21_1) %>% 
+  slice_min(Remainder21) %>% 
+  ungroup() %>% 
+  
+  #REMOVE FIRST PERIOD 
+  #Because this is for teh first 21 days 
+  filter(!Div21_1 == 0) %>% 
+  
+  #COMPUTE DIFFERENCE TO DECIDE WHETHER LAST OR FIRST SAMPLE OF PERIOD IS BETTER 
+  mutate(Remainder21_Lag = abs(Lag - 21))
+View(RA_Prep2)
+#83 samples
+
+
+#Check if all expected individuals are here 
+View(RA_Prep2 %>% 
+       distinct(Sampling_Cat,
+                ExperimentalGroup,
+                EvictionStatus,
+                AnimalID) %>% 
+       arrange(Sampling_Cat,
+               ExperimentalGroup,
+               EvictionStatus))
+
+
+#Remove samples already done 
+Sel_RA <- RA_Prep2 %>% 
+  
+  #REMOVE SAMPLES SELECTED BEFORE
+  #does not change the number of samples
+  #REMOVE SAMPLES POST-PAIRING  
+  filter(!UrineNumber %in% Sel_PostPair$UrineNumber) %>% 
+  #REMOVE SAMPLES PRE-EVICTION 
+  filter(!UrineNumber %in% Sel_PreEviction$UrineNumber) %>% 
+  #REMOVE SAMPLES POST-EVICTION
+  filter(!UrineNumber %in% Sel_PostEviction$UrineNumber) %>% 
+  #REMOVE SAMPLES FIRST CONC
+  filter(!UrineNumber %in% Sel_FirstConc$UrineNumber)
+View(Sel_RA)
+
+
+#Count of samples
+Sel_RA_Count <- Sel_RA %>% 
+  group_by(Sampling_Cat,
+           ExperimentalGroup,
+           EvictionStatus,
+           AnimalID) %>% 
+  summarize(Count = n_distinct(UrineNumber)) %>% 
+  ungroup()
+View(Sel_RA_Count)
+
+
+
+
+```
+
+
+#All Samples 
+
+```{r All samples}
+
+DC_Analyses <- bind_rows(Sel_Isol, # isolation
+                         Sel_PostPair,
+                         Sel_PreEviction,
+                         Sel_PostEviction,
+                         Sel_FirstConc,
+                         Sel_RA)
+
+View(DC_Analyses)
+
+```
+
+
+

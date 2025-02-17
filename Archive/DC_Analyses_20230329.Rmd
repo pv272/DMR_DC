@@ -1,0 +1,596 @@
+---
+title: "Untitled"
+output: html_document
+date: '2023-03-15'
+editor_options: 
+  chunk_output_type: console
+---
+#Package 
+
+```{r Package}
+
+library(glmmTMB)
+
+```
+
+
+
+#Questions 
+
+Do queen defend their status 
+Are queen more likely to win reproductive competition
+
+Are heavier individuals more likely to win reproductive competition
+Is the relationship between body-mass and outcome of reproductive competition dependent on treatment
+
+Are older individuals more likely to win reproductive competition
+Is the relationship between age and outcome of reproductive competition dependent on treatment
+
+Are older queen or queen that produced more offspring less capable to defend their status? 
+
+#General 
+
+One issue I am facing is how to model the questions I want to answer because of the assymetries in pair composition. 
+
+Who to take as a focal? I see two alternatives
+
+i) Focal on is put on lighter sub and one remove all data where sub BM > queen BM in the queen treatment 
+
+ii) Include more sub BM > queen BM and focal a random female within the pair (would we have to run sample and run the model thousands of time?)
+
+#csv 
+
+```{r}
+
+#DC info 
+
+DC_Info_F <- read.csv("DC_Info_F_20230329.csv")
+
+#Relevant Weight 
+
+```
+
+#Experimental design 
+
+#BM
+
+There is no difference in body mass at isolation and pairing across treatments. BM at eviction are considered as part of experiment already and are analyzed later
+
+```{r Summary}
+
+#Without distinction Sub-Queen 
+BM_Summary <- ClosestWeight_Milestone %>% 
+  group_by(Treatment) %>% 
+  summarize(Min = min(Weight),
+         Max = max(Weight),
+         Median = median(Weight),
+         Avg = mean(Weight),
+         FirstQuartile = quantile(Weight, probs = 0.25),
+         ThirdQuartile = quantile(Weight, probs = 0.75),
+         SD = sd(Weight)) %>% 
+  ungroup()
+View(BM_Summary)
+
+```
+
+
+```{r Models}
+
+#At isolation
+LM_BMPIsol <- lm(Weight ~ Treatment, 
+              data = ClosestWeight_Milestone %>% 
+                filter(DateType == "Isolation"))
+summary(LM_BMPIsol)
+
+
+#At pairing
+LM_BMPairing <- lm(lm(Weight ~ Treatment, 
+              data = ClosestWeight_Milestone %>% 
+                filter(DateType == "Pairing"))) 
+summary(BM_Pairing)
+
+```
+
+
+## BM difference  
+To be added from data exploration
+
+## Age
+To be added from data exploration
+
+##Age difference 
+To be added from data exploration 
+
+
+#Predictors of conflict outcome
+
+After n=9 eviction in sub treatment, there are many convergence issues in logistic regression as soon as one adds one explanatory variable (delta BM or delta age). Randomizing which animal is taken as focal does affect model output and some randomization lead to convergence issue. Once randomization is done, running a model on the randomly selected focal or their partners only affects the sign of the intercept but the slope remains the same. 
+
+At this stage, I have only run the model with the weight at isolation. It would be worth to have a look at wffect of BM at paring and eviction. Watch out that at eviction some individuals may be pregnant. To do that faster, I could create a nested dataset 
+
+i) Date Type 
+ii) Treatment: Sub, Queen, Both 
+
+and do as I did for the IB experiment
+
+```{r Data}
+
+#Remove data where no eviction occurred 
+#At this stage it is done after, but could be done here to save libnes of codes. 
+
+
+
+```
+
+
+##Sub treatment
+
+```{r Data}
+
+Heavier_Sub_Model <- Heavier %>% 
+  filter(EvictionStatus != "InGroup",
+         Treatment == "Sub",
+         DateType == "Isolation") %>% 
+  droplevels()
+
+
+Lighter_Sub_Model <- Lighter %>% 
+  filter(EvictionStatus != "InGroup",
+         Treatment == "Sub",
+         DateType == "Isolation") %>% 
+  droplevels()
+View(Lighter_Sub_Model )
+
+
+Older_Sub_Model <- Older %>% 
+  filter(EvictionStatus != "InGroup",
+         Treatment == "Sub",
+         DateType == "Isolation") %>% 
+  droplevels()
+
+
+Younger_Sub_Model <- Younger %>% 
+  filter(EvictionStatus != "InGroup",
+         Treatment == "Sub",
+         DateType == "Isolation") %>% 
+  droplevels()
+
+#Randomized data set 
+To_Randomize_Sub_Model<- WeightDiff %>% 
+  filter(DateType == "Isolation",
+         Treatment == "Sub",
+         EvictionStatus != "InGroup")
+View(To_Randomize_Sub_Model)
+
+#First randomization
+set.seed(123)
+Random1_Sub_Model <- To_Randomize_Sub_Model %>% 
+  slice_sample(prop = 0.5)
+View(Random1b_Sub_Model)
+
+#Animal not in first randomization 
+Random1b_Sub_Model <- To_Randomize_Sub_Model %>% 
+  filter(!AnimalID %in% Random1_Sub_Model$AnimalID)
+View()
+
+#Second randomization
+set.seed(1234)
+Random2_Sub_Model <- To_Randomize_Sub_Model %>% 
+  slice_sample(prop = 0.5)
+View(Random2_Sub_Model)
+
+
+#Animal not in second randomization
+Random2b_Sub_Model <- To_Randomize_Sub_Model %>% 
+  filter(!AnimalID %in% Random2_Sub_Model$AnimalID)
+View(Random2b_Sub_Model)
+
+
+set.seed(1)
+Random3_Sub_Model <- To_Randomize_Sub_Model %>% 
+  slice_sample(prop = 0.5)
+
+#Animal not in second randomization
+Random3b_Sub_Model <- To_Randomize_Sub_Model %>% 
+  filter(!AnimalID %in% Random2_Sub_Model$AnimalID)
+```
+
+```{r Data explor}
+
+```
+
+If data where no eviction is not removed from the dataset, the model output is different. I am not sure why
+
+Probability of being win and lose adds to 1 for a given focal animal.
+Probability of win and lose of two different animals add to 1
+
+```{r Model BM focal}
+
+
+################################################Heavier as focal 
+#One potential issue here is that I have BM difference of at least 10 grams
+
+#Heavier P win 
+ST_Heavier_PW_M <- glmmTMB(EvictionStatus2 ~ 1,
+                         family = binomial,
+                         data = Heavier_Sub_Model)
+summary(ST_Heavier_PW_M)
+
+View(Heavier_Sub_Model)
+
+
+
+#Significant; thus estimate is significantly different from 0 (exp0 = 1),which represents an odd of 1 or 0.5 probability of winning. I do not understant fully since 2.079 - (1.96 * 1.061) is smaller than 0
+
+ST_Heavier_PW <- exp(2.079)/(1 + exp(2.079))
+#0.89
+8/9
+
+
+
+#Heavier P lose = Lighter P win 
+ST_Heavier_PL_M <- glmmTMB(EvictionStatus ~ 1,
+                         family = binomial,
+                         data = Heavier_Sub_Model)
+summary(ST_Heavier_PL_M)
+
+ST_Heavier_PL <- exp(-2.079)/(1 + exp(-2.079))
+#0.11 
+
+
+################################################Lighter as focal 
+
+#Lighter P win = Heavier P lose
+ST_Lighter_PW_M <- glmmTMB(EvictionStatus2 ~ 1,
+                         family = binomial,
+                         data = Lighter_Sub_Model)
+summary(ST_Lighter_PW_M)
+#Exact mirror of when heavier is taken as reference 
+
+ST_Lighter_PW <- exp(-2.079)/(1 + exp(-2.079))
+#0.11
+
+
+#Lighter P lose = Heavier P win 
+ST_Lighter_PL_M <- glmmTMB(EvictionStatus ~ 1,
+                         family = binomial,
+                         data = Lighter_Sub_Model)
+summary(ST_Lighter_PL_M)
+
+ST_Lighter_PL <- exp(2.079)/(1 + exp(2.079))
+#0.88
+ 
+```
+
+If one tries to add information of age difference, one runs into convergence issues and there is no model output. Keep in mind that the model has a very small sample size (n=9)
+
+```{r Add Age Diff}
+
+#Heavier as reference
+ST_Heavier_PW_MA <- glmmTMB(EvictionStatus2 ~ as.integer(AgeDiff),
+                         family = binomial,
+                         data = Heavier_Sub_Model)
+summary(ST_Heavier_PW_MA)
+#Convergence issue, doesn't run 
+
+```
+
+If one adds delta BM while retaining heavier animal as focal, delta BM is not significantly different. That may not really be surprising as all BM difference are above 10 and there may be no positive relationship above BM difference larger than 10 grams.  
+
+But is such a model sensical? heavier as reference and then BM difference as explanatory variable.
+
+```{r Add BM diff}
+
+#Heavier as reference
+#Lighter as reference gives exactly the opposite intercept but the slope is the same
+ST_Heavier_PW_MBM <- glmmTMB(EvictionStatus2 ~ WeightDiff,
+                         family = binomial,
+                         data = Heavier_Sub_Model)
+summary(ST_Heavier_PW_MBM)
+
+View(Heavier_Sub_Model)
+#For a BM difference of 0 (nonsensical), the heavier animal as a p win of 3% but standard error span from 0 to 100%
+ST_Heavier_PW_BM <- exp(-3.4442)/ (1+exp(-3.4442))
+
+
+#basically has between 0 and 100 % chance of winnin 
+Upper <- exp(-3.4442 + 1.96*(5.4241))/ (1+exp(-3.4442 + 1.96*(5.4241)))
+Lower <- exp(-3.4442 - 1.96*(5.4241))/ (1+exp(-3.4442 - 1.96*(5.4241)))
+
+
+#How do we find out the BM difference from which P win is significantly greater than 50%? Ask Jack
+
+BM5 <- exp(-3.4442 + (5*0.3611))/ (1+ exp(-3.4442 + (5*0.3611)))
+BM10 <- exp(-3.4442 + (10*0.3611))/ (1+ exp(-3.4442 + (10*0.3611)))
+BM15 <- exp(-3.4442 + (15*0.3611))/ (1+ exp(-3.4442 + (15*0.3611)))
+BM20 <- exp(-3.4442 + (20*0.3611))/ (1+ exp(-3.4442 + (20*0.3611)))
+
+#What is best way to represent the data of a binomial distribution? How to represent data in percentage 
+
+#? For Jack: I am not sure I understand the uncertainty around the intercept (huge) and the uncertainty of non-null BM difference. In term of visualization when one imagine the confidence interval, the std error of intercept and slope do not add up
+
+```
+
+Plot prediction of the model 
+```{r Plot}
+
+
+
+
+```
+
+```{r Model Age focal}
+
+################################################Older as focal 
+#One potential issue here is that I have BM difference of at least 10 grams 
+#Older P win 
+ST_Older_PW_M <- glmmTMB(EvictionStatus2 ~ 1,
+                         family = binomial,
+                         data = Older_Sub_Model)
+summary(ST_Older_PW_M)
+#Older animals are not more significantly more likely to win
+
+ST_Older_PW <- exp(0.6931)/(1 + exp(0.6931))
+#0.66
+#Thus 0.44 that the youngest animals win
+
+```
+
+Cannot BM difference as it doesn't converge 
+
+```{r Add BM diff}
+ST_Older_PW_MBM <- glmmTMB(EvictionStatus2 ~ WeightDiff,
+                         family = binomial,
+                         data = Older_Sub_Model)
+summary(ST_Heavier_PW_MA)
+
+```
+
+Add age difference. Non sensical? see questions for model with heavier as focal. 
+
+```{r Add age diff}
+
+#Heavier as reference
+ST_Older_PW_MA <- glmmTMB(EvictionStatus2 ~ as.integer(AgeDiff),
+                         family = binomial,
+                         data = Older_Sub_Model)
+summary(ST_Heavier_PW_MA)
+#Convergence issue, doesn't run
+
+```
+
+
+```{r Plot}
+
+```
+
+If one randomize which individual is taken as focal and run a model with these focals and another model with the individual as focal, the effect of BM difference is the same (teh slope), the intercept is the same but with a different sign. So the interecpt is completely different and one must onder whether we are interested in this 
+
+I am not sure what the intercept in such models means (probability of winning if delts BM == 0)?
+
+I am really surprised that Delta BM does not come out as significant as the correspondance is just almost 100%.
+
+Randomization affect the model output as some model have convergence issue under some randomization whereas others do provide an output. We will have to assess whether that is still the case when the sample size is larger 
+
+
+```{r Random focal}
+
+names(Random1_Sub_Model)
+##############################################Randomization 1
+#Random 1
+ST_R1_PW <- glmmTMB(EvictionStatus2 ~ WeightDiff,
+                         family = binomial,
+                         data = Random1_Sub_Model)
+summary(ST_R1_PW)
+View(Random1_Sub_Model)
+#Incredibly surprised that there is no effect of Weight Diff
+
+
+#Does the same occur if BM is categorized as heavier or lighter? 
+ST_R1_PW <- glmmTMB(EvictionStatus2 ~ WeightDiff_Cat,
+                         family = binomial,
+                         data = Random1_Sub_Model)
+summary(ST_R1_PW)
+View(Random1_Sub_Model)
+levels(Random1_Sub_Model$WeightDiff_Cat)
+#Yes
+#I have no idea why I can have such a hight standard error. Is that because there is no variation and all lighter animal are evictee? 
+
+#Random 1b 
+ST_R1b_PW <- glmmTMB(EvictionStatus2 ~ WeightDiff,
+                         family = binomial,
+                         data = Random1b_Sub_Model)
+summary(ST_R1b_PW)
+
+#########################################################Randomization 2
+#Convergence issues
+#Showing that there are differences between models 
+
+#Random 2
+ST_R2_PW <- glmmTMB(EvictionStatus2 ~ WeightDiff,
+                         family = binomial,
+                         data = Random2_Sub_Model)
+summary(ST_R2_PW)
+View(Random2_Sub_Model)
+
+#Random 2b 
+ST_R2b_PW <- glmmTMB(EvictionStatus2 ~ WeightDiff,
+                         family = binomial,
+                         data = Random2b_Sub_Model)
+summary(ST_R2b_PW)
+
+```
+
+```{r Plot}
+
+```
+
+
+##Queen treatment
+
+#Are queen more likely to win reproductive competition?
+
+```{r Data}
+
+Heavier_QT_Model <- Heavier %>% 
+  filter(EvictionStatus != "InGroup",
+         Treatment == "Queen") %>% 
+  droplevels()
+View(Heavier_Queen_Model)
+
+
+Lighter_QT_Model <- Lighter %>% 
+  filter(EvictionStatus != "InGroup",
+         Treatment == "Queen") %>% 
+  droplevels()
+View(Lighter_Queen_Model )
+
+
+Queen_QT_Model <- WeightDiff %>% 
+  filter(EvictionStatus != "InGroup",
+         Treatment == "Queen",
+         BS_Original == "Breeder") %>% 
+  droplevels()
+View(Queen_ST_Model)
+
+
+Helper_QT_Model <- WeightDiff %>% 
+  filter(EvictionStatus != "InGroup",
+         Treatment == "Queen",
+         BS_Original == "Helper") %>% 
+  droplevels()
+View(Queen_ST_Model)
+
+```
+
+```{r Data explor}
+
+```
+
+The model gives the log(odds of being evictor) for queen. Thus, the odds are against queen being evictor and in favour of queen being evicted. Similarly they are in favour of sub being evictor and against sub being evicted
+
+```{r Model}
+
+######################################Heavier perspective
+
+unique(Heavier_Queen_Model$EvictionStatus)
+
+#log odds of heavier to evict
+#All animals considered
+QT_Heavier_PW_M <- glmmTMB(EvictionStatus2 ~ 1,
+                    family = "binomial",
+                    data = Heavier_QT_Model %>% 
+                      filter(DateType == "Isolation"))
+summary(QT_Heavier_PW_M)
+QT_Heavier_PW <- exp(-0.2231 )/(1 + exp(-0.2231 ))
+#44%
+
+
+#Probability of queen to be evicted
+QT_Queen_PL_M <- glmmTMB(EvictionStatus ~ 1,
+                    family = "binomial",
+                    data = Queen_QT_Model %>% 
+                      filter(DateType == "Isolation"))
+summary(QT_Queen_PL_M)
+
+QT_Queen_PL <- exp(1.2528)/(1 + exp(1.2528))
+#77.78
+QT_Queen_PW <- exp(-1.2528)/(1 + exp(-1.2528))
+#22.2
+
+
+#Remove data from 2 heavier subordinate
+QT_HeavierQueen_PL_M <- glmmTMB(EvictionStatus ~ 1,
+                    family = "binomial",
+                    data =Queen_QT_Model %>% 
+                      filter(DateType == "Isolation",
+                             WeightDiff_Cat == "Heavier"))
+summary(QT_HeavierQueen_PL_M)
+
+QT_HeavierQueen_PW <- exp(-0.9163)/(1 + exp(-0.9163))
+#28.57
+QT_HeavierQueen_PL <- exp(0.9163)/(1 + exp(0.9163))
+#71.43
+
+# 
+# #Odds of being evictee
+# Queen_m2 <- glmmTMB(EvictionStatus2 ~ 1,
+#                     family = "binomial",
+#                     data = Queen_BF_Data)
+# summary(Queen_m2)
+# 
+# Q_Prob_Evictee <- exp(1.2528)/(1 + exp(1.2528))
+# 
+# #Sum of probability 
+# Q_Prob_Evictor +Q_Prob_Evictee
+# #= 1
+
+######################################Helper perspective 
+
+# #Log odds of being evictor
+# #Should be mirror of log odds queen being evictor
+# Helper_m1 <- glmmTMB(EvictionStatus ~ 1,
+#                     family = "binomial",
+#                     data = Queen_Helper_Data)
+# summary(Helper_m1)
+# 
+# H_Prob_Evictor <- exp(1.2528)/(1 + exp(1.2528))
+# 
+# 
+# #Odds of being evictee
+# Helper_m2 <- glmmTMB(EvictionStatus2 ~ 1,
+#                     family = "binomial",
+#                     data = Queen_Helper_Data)
+# summary(Helper_m2)
+# 
+# H_Prob_Evictee <- exp(-1.2528)/(1 + exp(-1.2528))
+# 
+# #Sum of probability 
+# H_Prob_Evictor +H_Prob_Evictee
+# #= 1
+# 
+
+```
+
+```{r Plot}
+
+```
+
+# Effect of breeding status on P win
+
+Here we will try to assess whether the effect of breeding status on p win differ 
+
+```{r Data}
+
+Heavier_QST_Model <- Heavier %>% filter(DateType == "Isolation",
+                        EvictionStatus != "InGroup",
+                             Treatment == "Sub" |(Treatment == "Queen" & BS_Original == "Breeder"))
+
+```
+
+
+```{r Model}
+
+
+#P win of helpers and breeders
+#Removing data from lighter breeder 
+#n = 19
+Heavier_PL_M <- glmmTMB(EvictionStatus2 ~ Treatment,
+                    family = "binomial",
+                    data = Heavier %>% 
+                      filter(DateType == "Isolation",
+                             EvictionStatus != "InGroup",
+                             Treatment == "Sub" | (Treatment == "Queen" & BS_Original == "Breeder")))
+summary(Heavier_PL_M)
+#Note that the estimate and all the rest are similar to logistic regression done individually 
+
+```
+
+# what are the predictors of rpeorductive conflict 
+
+# What are the predictors of dominance 
+
+##Is the relationship between BM and competitive abilities dependent on breeding status
+
+
+##is the relationship between Age and competitive abilities dependent on breeding status

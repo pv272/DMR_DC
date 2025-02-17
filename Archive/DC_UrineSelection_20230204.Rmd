@@ -1,0 +1,1345 @@
+---
+title: "Untitled"
+output: html_document
+date: '2023-04-03'
+editor_options: 
+  chunk_output_type: console
+---
+
+#General 
+
+1) Whenever relevant, do I need to get samples up to -88d or shall I take a slightly longer period? Til D85? D80? always get a few pregnant sample? Perhaps would be good to consistently go through a few pregnancy samples.
+
+
+#Data from Prep
+
+```{r Import}
+
+#DC_Info_F 
+#CSV available
+
+
+#Urine samples
+#DC_Urine_F CSV available
+
+
+```
+
+The next part could be moved in data prep as I can use it for interesting plotting
+
+##Group Info 
+
+```{r DataPrep}
+
+#Group Info
+GroupInfo <- DC_Info_Group %>% 
+  
+  #RELEVANT GROUP INFO
+  select(ExperimentalGroup,
+         Treatment,
+         EvictionStatus_Group,
+         BreederCount,
+         CoBreeding,
+         IsolationDate,
+         PairingDate,
+         EvictionDate,
+         EvictionPairingDayDiff,
+         EvictionCategory) %>% 
+  arrange(Treatment,
+          EvictionStatus_Group,
+          EvictionPairingDayDiff)
+View(GroupInfo)
+
+
+#Evictor Info
+#Must add original BS Status
+EvictorInfo <- DC_Info_F %>% 
+  arrange(Treatment,
+          ExperimentalGroup,
+          EvictionStatus) %>% 
+  group_by(ExperimentalGroup) %>% 
+  slice(1) %>% 
+  ungroup() %>% 
+  
+  left_join(.,DC_Dates_F_GestStat %>% 
+              filter(DateType == "Eviction"), 
+            by=c("AnimalID" = "AnimalID", "EvictionDate" = "Date")) %>%
+  
+  select(ExperimentalGroup,
+         AnimalID,
+         BS_Original,
+         EvictionDate,
+         EvictionPairingDayDiff,
+         ConceptionPairingDayDiff,
+         ConceptionEvictionDayDiff,
+         ParturitionEvictionDayDiff,
+         GestationStatus_Trimester) %>% 
+  
+  #RENAME
+  rename(EvictorID = AnimalID,
+         Evictor_BSOriginal = BS_Original,
+         Evictor_ConceptionPairingDayDiff =  ConceptionPairingDayDiff,
+         Evictor_ConceptionEvictionDayDiff = ConceptionEvictionDayDiff,
+         Evictor_ParturitionEvictionDayDiff =ParturitionEvictionDayDiff,
+         Evictor_GestationStatus = GestationStatus_Trimester)
+View(EvictorInfo )
+
+
+#Evictee Info 
+#Must add original BS Status
+EvicteeInfo <- DC_Info_F %>% 
+  filter(!(AnimalID %in% EvictorInfo$EvictorID)) %>%
+  
+  #ADD GESTATION STATUS
+  left_join(.,DC_Dates_F_GestStat %>% 
+              filter(DateType == "Eviction"), 
+            by=c("AnimalID" = "AnimalID", "EvictionDate" = "Date")) %>%
+  
+  #SELECT
+  select(ExperimentalGroup,
+         AnimalID,
+         BS_Original,
+         EvictionDate,
+         ConceptionPairingDayDiff,
+         ConceptionEvictionDayDiff,
+         ParturitionEvictionDayDiff,
+         GestationStatus_Trimester) %>%
+  
+  #RENAME
+  rename(EvicteeID = AnimalID,
+         Evictee_BSOriginal = BS_Original,
+         Evictee_ConceptionPairingDayDiff =  ConceptionPairingDayDiff,
+         Evictee_ConceptionEvictionDayDiff = ConceptionEvictionDayDiff,
+         Evictee_ParturitionEvictionDayDiff =ParturitionEvictionDayDiff,
+         Evictee_GestationStatus = GestationStatus_Trimester)
+
+names(GroupInfo)
+
+#Merge group and individual info 
+EvictionInfo <- GroupInfo %>% 
+  
+  #RELEVANT EVICTOR INFO 
+  left_join(.,EvictorInfo) %>% 
+  
+  #RELEVANT EVICTEE INFO 
+  left_join(., EvicteeInfo) %>% 
+  
+  #RELOCATE
+  relocate(EvicteeID, .after = EvictorID) %>% 
+  
+  relocate(Evictee_BSOriginal, .after = Evictor_BSOriginal) %>% 
+  
+  relocate(Evictee_ConceptionPairingDayDiff,.after = Evictor_ConceptionPairingDayDiff) %>% 
+
+  relocate(Evictee_ConceptionEvictionDayDiff, .after = Evictor_ConceptionEvictionDayDiff) %>% 
+  
+  relocate(Evictee_ParturitionEvictionDayDiff, .after = Evictor_ParturitionEvictionDayDiff) %>% 
+  
+  relocate(Evictee_GestationStatus,.after = Evictor_GestationStatus)
+  
+
+View(EvictionInfo)
+View(DC_Info_F)
+#Must manually assign a parturition date to SOF006 in Firestone on the 20/12/2023
+
+#For Corbeau ARF028 produced two litters before being evicted, delays are calculated with first conception and parturition, is that an issue? Keep in mind she was evicted the day she gave birth to second litter 
+
+write.csv(EvictionInfo,"EvictionInfo_20230205.csv",row.names = FALSE)
+
+  
+```
+
+```{r Eviction Type}
+
+
+#Early eviction
+EarlyEviction <- DC_Info_F %>% 
+  filter(EvictionPairingDayDiff <= 21)
+View(EarlyEviction)
+#14 groups
+
+
+#Late eviction
+LateEviction <- DC_Info_F %>% 
+  filter(EvictionPairingDayDiff > 21)
+#4 groups 
+  
+
+#Late or no eviction
+LateOrNoEviction <- DC_Info_F %>% 
+  filter(EvictionPairingDayDiff > 21 | is.na(EvictionDate))
+View(LateOrNoEviction)
+#7 groups
+
+#NoEviction
+NoEviction <- DC_Info_F %>% 
+  filter(is.na(EvictionDate))
+View(NoEviction)
+#3 groups
+
+
+```
+
+
+```{r Gestation status}
+
+##################################################Early eviction 
+#Q1)Predictor of eviction 
+#Q2) When did the evictor activate
+#Q3) Did the evictee activate
+#Q4) if yes to 3) When did the evictee activate? 
+#Q5
+
+
+#Category 1
+#Early evictor that conceived around eviction
+#7 groups could be up to 4 more
+EarlyOr_Conc <- EvictionInfo %>% 
+       filter(Evictor_GestationStatus == "Conception",
+              EvictionCategory == "Early")
+View(EarlyOr_Conc)
+#Eviction between 1 and 5 days post-pairing 
+#Eviction between 100 and 91 pre-parturition => Activation within 12 days of eviction
+
+
+
+#Category 2
+#Early evictor that succesfully conceived long after eviction
+#3 groups; could be up to 4 more
+EarlyOr_PreFirst <- EvictionInfo %>% 
+       filter(Evictor_GestationStatus == "PreFirstConception" & 
+              EvictionCategory == "Early" | 
+                ExperimentalGroup == "Firestone")
+View(EarlyOr_PreFirst)
+#did they activate shortly after eviction like in category 1 or just before conception
+
+
+#Too early to tell 
+#4 groups
+#will fall into 1 or 2
+EarlyOr_TooEarly <- EvictionInfo %>% 
+       filter(Evictor_GestationStatus == "NotPregnant",
+              EvictionCategory == "Early",
+              ExperimentalGroup != "Firestone")
+View(EarlyOr_TooEarly)
+#Eviction occurred between 1 and 5 days 
+
+
+
+##################################################Late eviction
+#Category 3
+LateOr_Conc <- EvictionInfo %>% 
+       filter(Evictor_GestationStatus == "Conception",
+              EvictionCategory == "Late")
+View(LateOr_Conc )
+
+
+
+
+LateOr_PreFirst <- EvictionInfo %>% 
+       filter(Evictor_GestationStatus == "NotPregnant",
+              EvictionCategory == "Late")
+View(LateOr_PreFirst)
+
+
+
+
+
+#All Evictor that conceived at eviction
+Or_Conc <- EvictionInfo %>% 
+       filter(Evictor_GestationStatus == "Conception") %>% 
+  arrange(Treatment, 
+          EvictionPairingDayDiff)
+View(Or_Conc)
+
+
+
+
+#Early evictor that did not conceive
+EarlyOr_NoConc <- EvictionInfo %>% 
+       filter(!Evictor_GestationStatus == "Conception",
+              EvictionCategory == "Early") %>% 
+    arrange(Treatment, 
+          EvictionPairingDayDiff)
+View(EarlyOr_NoConc)
+
+
+###############################################Sub treatment 
+
+#ST Evictor conception
+View(EvictionInfo %>% 
+       filter(Treatment == "Sub",
+              Evictor_GestationStatus == "Conception"))
+
+#ST Evictor not pregnant
+View(EvictionInfo %>% 
+       filter(Treatment == "Sub",
+              Evictor_GestationStatus == "NotPregnant"))
+#Two of them could be pregnant and thus fall in the category conception
+#Firestone should be in Pre-First conception as she died giving birth and there was no DOB recorded
+
+#ST Evictor Pre-firstConception
+View(EvictionInfo %>% 
+       filter(Treatment == "Sub",
+              Evictor_GestationStatus == "PreFirstConception"))
+#Two of them could be pregnant and thus fall in the category conception
+
+
+###############################################Queen treatment
+
+#QT Early Evictor Conception
+View(EvictionInfo %>% 
+       filter(Treatment == "Queen",
+              Evictor_GestationStatus == "Conception",
+              EvictionTime == "Early"))
+
+#QT Late Evictor Conception
+View(EvictionInfo %>% 
+       filter(Treatment == "Queen",
+              Evictor_GestationStatus == "Conception",
+              EvictionTime == "Late"))
+
+
+#QT Early Evictor NotPreg
+View(EvictionInfo %>% 
+       filter(Treatment == "Queen",
+              Evictor_GestationStatus == "NotPregnant",
+               EvictionTime == "Early"))
+#Two of them could be pregnant and thus fall in the category conception
+
+
+#QT Late Evictor NotPreg
+View(EvictionInfo %>% 
+       filter(Treatment == "Queen",
+              Evictor_GestationStatus == "NotPregnant",
+               EvictionTime == "Late"))
+
+
+#QT Early Evictor PreFirstConception 
+View(EvictionInfo %>% 
+       filter(Treatment == "Queen",
+              Evictor_GestationStatus == "PreFirstConception",
+               EvictionTime == "Early"))
+
+#QT Late Evictor PreFirstConception 
+View(EvictionInfo %>% 
+       filter(Treatment == "Queen",
+              Evictor_GestationStatus == "PreFirstConception",
+               EvictionTime == "Late"))
+
+
+```
+
+Try to plot information on reproductive stage of evictor and evictee. Should be moved into data exploration. Valid for  
+
+```{r Plot gestation status}
+
+#Data to plot
+GestationInfo_ToPlot <- EvictionInfo %>% 
+  select(ExperimentalGroup,
+              EvictionTime,
+              Treatment,
+              Evictor_BSOriginal,
+              Evictee_BSOriginal,
+              EvictionStatus_Group,
+              Evictor_GestationStatus,
+              Evictee_GestationStatus,
+              BreederCount) %>% 
+  mutate(Evictor_GestationStatus = case_when(Evictor_GestationStatus == "Conception" ~ "Conc",
+                                             Evictor_GestationStatus == "NotPregnant" ~ "NotPreg", 
+                                             Evictor_GestationStatus == "PreFirstConception" ~ "PreFirstConc")) %>% 
+  filter(!is.na(Evictor_GestationStatus))
+View(GestationInfo_ToPlot)
+
+
+
+#All data
+ggplot(GestationInfo_ToPlot,
+       aes(x=Evictor_GestationStatus,fill=Evictee_GestationStatus)) + 
+  
+  geom_bar() +
+  
+  facet_grid(Treatment ~ EvictionTime) +
+
+  theme_classic()
+
+
+#Sub ecictor data 
+ggplot(GestationInfo_ToPlot %>% 
+         filter(Evictor_BSOriginal == "Helper"),
+       aes(x=Evictor_GestationStatus,fill=Evictee_GestationStatus)) + 
+  
+  geom_bar() +
+  
+  facet_grid(Treatment ~ EvictionTime) +
+
+  theme_classic()
+
+
+# #Queen evictor
+# ggplot(GestationInfo_ToPlot %>% 
+#          filter(Evictor_BSOriginal == "Breeder"),
+#        aes(x=Evictor_GestationStatus,fill=Evictee_GestationStatus)) + 
+#   
+#   geom_bar() +
+#   
+#   facet_grid(Treatment ~ EvictionTime) +
+# 
+#   theme_classic()
+
+```
+
+#Urine selection 
+
+Strictly speaking, only this part should stay in the current code
+
+At the moment, we will only select sample from females
+
+##Data 
+
+```{r Pre-isol}
+
+#All pre-isolation 
+Urine_PreIsol <- 
+  
+  #URINE
+  DC_Info_Urine_F %>% 
+  
+  #RETAIN PRIOR TO ISOLATION 
+  filter(UrineDate <= IsolationDate) %>%
+  
+  #ADD ISOLATION DAY DIFF 
+  mutate(IsolationDayDiff = UrineDate - IsolationDate) %>% 
+  
+  #RETAN FIRST SAMPLE 
+  group_by(AnimalID,
+           UrineDate) %>% 
+  slice_min(UrineNumber) %>% 
+  ungroup() %>% 
+
+  
+  #ARRANGE 
+  arrange(Treatment, 
+          ExperimentalGroup,
+          UrineDate, 
+          AnimalID) %>% 
+  
+  #DISTINCT
+  distinct()
+View(Urine_PreIsol)
+#351 samples preisolation 
+
+```
+
+
+```{r Isol}
+
+#Isolation sample 
+Urine_Isol <-   DC_Info_Urine_F %>% 
+  
+  filter(UrineDate > IsolationDate & UrineDate <= PairingDate) %>% 
+  
+  #ADD ISOLATION DIFF 
+  mutate(IsolationDayDiff = UrineDate - IsolationDate) %>% 
+  
+  #ADD PAIRING DIFF 
+  mutate(PairingDayDiff = UrineDate - PairingDate) %>%
+  
+  #RETAN FIRST SAMPLE 
+  group_by(AnimalID,
+           UrineDate) %>% 
+  slice_min(UrineNumber) %>% 
+  ungroup() %>% 
+
+  
+  #ADD COUNT SAMPLE 
+  group_by(AnimalID) %>% 
+  mutate(Count = n_distinct(UrineDate)) %>% 
+  ungroup() %>% 
+  
+  #ARRANGE
+  arrange(Treatment,
+          ExperimentalGroup,
+          AnimalID,
+          UrineDate) %>% 
+  
+  #DISTINCT
+  distinct()
+  
+
+View(Urine_Isol )
+#363 samples
+
+names(DC_Info_Urine_F)
+
+```
+
+```{r Post-pairing}
+
+names(DC_Info_Urine_F )
+
+Urine_PostPairing <- DC_Info_Urine_F  %>% 
+  
+  #RETAIN POST PAIRING
+  filter(UrineDate > PairingDate) %>% 
+  
+  #ADD PAIRING DIFF 
+  mutate(PairingDayDiff = UrineDate - PairingDate) %>% 
+  
+  #ADD EVICTION DIFF 
+  mutate(EvictionDayDiff = UrineDate - EvictionDate) %>% 
+  
+  #ADD PARTURITION DIFFF 
+  mutate(ParturitionDayDiff = UrineDate - NextParturition_ParturitionDate) %>% 
+
+  #ADD IN GROUP OR NOT 
+  mutate(InGroup = case_when(EvictionStatus == "Evictee" & EvictionDayDiff >= 0 ~ "No",
+                             TRUE ~ "Yes")) %>% 
+  
+    #RETAN FIRST SAMPLE 
+  group_by(AnimalID,
+           UrineDate) %>% 
+  slice_min(UrineNumber) %>% 
+  ungroup() %>% 
+  
+    #DISTINCT
+  distinct()
+
+names(Urine_PostPairing)
+#1191 samples
+```
+
+
+#Hormonal correlates of dominance and eviction
+
+
+Select:
+i) last two samples before pairing as baseline
+ii) All samples within 10 days of pairing
+iii) All samples within 10 days of eviction
+
+
+```{r Baseline}
+
+#Samples within two weeks of pairing
+#Seems that there is a lot of variation
+#ask to the project 
+Urine_PreIsol_2W <- Urine_PreIsol %>% 
+  
+  #RETAIN SAMPLES LAST 2 WEEKS PRIOR ISOL
+  filter(IsolationDayDiff >= -14) %>% 
+  
+  #SELECT 
+  select(Treatment,
+         ExperimentalGroup,
+         AnimalID,
+         BS_Original,
+         EvictionStatus,
+         IsolationDayDiff,
+         UrineDate,
+         UrineNumber) %>% 
+  
+  #ARRANGE 
+  arrange(Treatment, 
+          ExperimentalGroup,
+          IsolationDayDiff, 
+          AnimalID) %>% 
+  
+  distinct()
+View(Urine_PreIsol_2W)
+
+write.csv(Urine_PreIsol_Formatted,"DC_Urine_PreIsol.csv",row.names = FALSE)
+
+
+#Summary
+Urine_PreIsol_Summary <- Urine_PreIsol_2W %>%
+  
+  #ADD COUNT 
+  group_by(ExperimentalGroup,
+           AnimalID,
+           BS_Original,
+           Treatment) %>% 
+  summarize(Count = n_distinct(UrineDate)) %>% 
+  ungroup() %>% 
+  arrange(Treatment,
+          Count,
+          BS_Original)
+View(Urine_PreIsol_Summary)
+#In the sub treatment, 5/10 groups that only have one sample 
+#In the queen treatment 4/11 groups have only one sample
+
+write.csv(Urine_PreIsol_Summary,"DC_Urine_PreIsol_Count.csv",row.names = FALSE)
+
+
+#Selection
+#Can be moved elsewhere
+Urine_PrePair_Baseline <- Urine_PreIsol_2W %>% 
+  
+  #RETAIN 2 LATEST SAMPLES
+  group_by(AnimalID) %>% 
+  slice_max(UrineDate, n=2) %>%
+  mutate(Count = n()) %>% 
+  ungroup() %>% 
+  
+  #ARRANGE
+  arrange(Treatment,
+          ExperimentalGroup,
+          AnimalID,
+          UrineNumber)
+View(Urine_PrePair_Baseline)
+
+```
+
+I should think, double check whether 10 days is a good number of days.
+
+```{r post-pairing 10}
+
+#Samples within 10 days post-pairing and prior to eviction
+Urine_PostPairing10 <- Urine_PostPairing %>% 
+  filter(PairingDayDiff <= 10,
+         EvictionDayDiff <= 0|is.na(EvictionDayDiff)) %>% 
+  #SELECT 
+  select(ExperimentalGroup,
+         Treatment,
+         EvictionCategory,
+         AnimalID,
+         BS_Original,
+         EvictionStatus,
+         PairingDayDiff,
+         EvictionDayDiff,
+         UrineDate,
+         UrineNumber) %>% 
+  
+  #ARRANGE
+  arrange(Treatment,
+          ExperimentalGroup,
+          BS_Original,
+          AnimalID,
+          UrineNumber)
+  
+View(Urine_PostPairing10)
+#125 samples
+
+
+#Summary
+View(Urine_PostPairing10 %>% 
+       group_by(EvictionCategory, 
+                ExperimentalGroup,
+                EvictionPairingDayDiff,
+                AnimalID,
+                EvictionStatus) %>% 
+       summarize(Count = n()))
+
+
+```
+
+
+
+```{r pre-eviction 16}
+#would it be better 14 days before?
+
+#Samples within 16 days post-pairing and prior to eviction
+Urine_PreEviction16 <- Urine_PostPairing %>%
+  
+  #SAMPLES TIL 16 DAYS PRE-EVICTION
+  filter(EvictionDayDiff <= 0,
+         EvictionDayDiff >= -16) %>% 
+  
+  #REMOVE SAMPLES IN POST PAIRING 10
+  filter(!UrineNumber %in% Urine_PostPairing10$UrineNumber) %>% 
+  
+  #SELECT 
+  select(ExperimentalGroup,
+         Treatment,
+         EvictionCategory,
+         AnimalID,
+         BS_Original,
+         EvictionStatus,
+         PairingDayDiff,
+         EvictionDayDiff,
+         UrineDate,
+         UrineNumber) %>% 
+  
+    
+  #ARRANGE
+  arrange(Treatment,
+          ExperimentalGroup,
+          BS_Original,
+          AnimalID,
+          UrineNumber)
+View(Urine_PreEviction16)
+#25 samples if 10 days 
+#29 samples if 15 days
+#32 samples if 16 days
+
+
+#Summary
+View(Urine_PreEviction10 %>% 
+       group_by(EvictionCategory, 
+                ExperimentalGroup,
+                AnimalID,
+                EvictionStatus) %>% 
+       summarize(Count = n()))
+#No sample on Corbeau evictor
+#More sample on evictee in Licher and Guiness why
+
+
+#Coverage for late eviction 
+#Protocol says sample should be collected every 2 days til 21 days, then every week
+View(Urine_PreEviction10 %>% 
+       filter(ExperimentalGroup %in% c("Licher","BlackLabel","Corbeau","Guinness")))
+
+View(DC_Info_F)
+
+
+```
+
+#Sampling categories 
+
+```{r Category}
+
+Cat1 <- Urine_PostPairing %>% 
+  #EARLY - CONCEPTION 
+  filter(EvictionCategory == "Early",
+         Eviction_GS == "Conception") %>% 
+
+  #DISTINCT 
+  distinct(ExperimentalGroup)
+
+
+Cat2 <- 
+
+  
+Cat3 <- Urine_PostPairing %>% 
+  #LATE - CONCEPTION
+  filter(EvictionCategory == "Late" & 
+         Eviction_GS == "Conception") %>% 
+  
+  #DISTINCT 
+  distinct(ExperimentalGroup)
+
+Cat4 <- Urine_PostPairing %>% 
+    
+  #SAMPLES FROM CAT 4
+  filter(EvictionCategory == "Late" & 
+         is.na(Eviction_GS)) %>% 
+  
+  #DISTINCT 
+  distinct(ExperimentalGroup)
+
+```
+
+
+
+#Rerproductive physiology of evictor
+
+##Reproductive state at eviction
+
+For category 1 we will use all samples til -88 pre-parturition and not included in earlier selection.
+
+```{r Category 1}
+
+RSRA_Or_Cat1 <- Urine_PostPairing %>% 
+  
+  #SAMPLES FROM CAT 1
+  filter(EvictionCategory == "Early",
+         Eviction_GS == "Conception") %>% 
+  
+  #EVICTOR
+  filter(EvictionStatus == "Evictor") %>% 
+  
+  #RETAIN SAMPLES TIL 87 DAYS (SAMPLE EVERY 2 DAYS) %>% 
+  filter(FirstDCParturitionDate == NextParturition_ParturitionDate,
+         ParturitionDayDiff <= -87) %>% 
+  
+  #REMOVE SAMPLES IN POST PAIRING 10
+  filter(!UrineNumber %in% Urine_PostPairing10$UrineNumber) %>% 
+  
+  #REMOVE SAMPLES IN PRE EVICTION 10
+  filter(!UrineNumber %in% Urine_PreEviction10$UrineNumber)
+View(RS_Or_Cat1)
+
+
+#Add 2 gestation samples per female
+
+```
+
+For category 2, we will use all samples from 10 days prior to eviction til 16 days post-eviction that are not included in earlier selection. Data shows that females from category 1 conceived between 3 and 12 days of eviction so I chose a duration that was slightly longer to be on the safe side
+
+```{r Category 2}
+
+RS_Or_Cat2 <- Urine_PostPairing %>% 
+  
+  #SAMPLES FROM CAT 1
+  filter(EvictionCategory == "Early" & 
+         Eviction_GS == "PreFirstConception" |
+           ExperimentalGroup == "Firestone") %>% 
+  
+  #EVICTOR
+  filter(EvictionStatus == "Evictor") %>% 
+  
+  #RETAIN SAMPLES TIL 16 DAYS POST EVICTION %>% 
+  filter(EvictionDayDiff <= 16) %>% 
+  
+  #REMOVE SAMPLES IN POST PAIRING 10
+  filter(!UrineNumber %in% Urine_PostPairing10$UrineNumber) %>% 
+  
+  #REMOVE SAMPLES IN PRE EVICTION 10
+  filter(!UrineNumber %in% Urine_PreEviction10$UrineNumber)
+View(RS_Or_Cat2)
+#Coverage is not great for DarlingBrew
+#Make sure post eviction that samples are collected for evictor as for evictee
+
+
+```
+
+For category 3, we will use all samples from 10 days before eviction til 87 days prior to first parturition that are not included in earlier selection.
+
+```{r Category 3}
+
+RS_Or_Cat3 <- Urine_PostPairing %>% 
+  
+  #SAMPLES FROM CAT 1
+  filter(EvictionCategory == "Late" & 
+         Eviction_GS == "Conception") %>% 
+  
+  #EVICTOR
+  filter(EvictionStatus == "Evictor") %>% 
+  
+  #RETAIN SAMPLES TIL 14 DAYS POST EVICTION %>% 
+  filter(EvictionDayDiff >= - 10,
+         EvictionDayDiff <= 16,
+         ParturitionDayDiff <= -87) %>% 
+  
+  #REMOVE SAMPLES IN POST PAIRING 10
+  filter(!UrineNumber %in% Urine_PostPairing10$UrineNumber) %>% 
+  
+  #REMOVE SAMPLES IN PRE EVICTION 10
+  filter(!UrineNumber %in% Urine_PreEviction10$UrineNumber)
+
+View(RS_Or_Cat3)
+#7 samples
+#The coverage is quite good but it would be interesting to see whether the ccoverage is good pre-eviction
+View(Urine_PreEviction10 %>% 
+filter(AnimalID %in% RS_Or_Cat3$AnimalID))
+#Licher is missing the sample at day -1 as should have been taken
+
+
+#Licher
+View(RS_Or_Cat3 %>% 
+       filter(ExperimentalGroup == "Licher"))
+
+
+#Black label
+View(RS_Or_Cat3 %>% 
+       filter(ExperimentalGroup == "BlackLabel"))
+```
+
+
+For category 4, we will use all samples from 16 days before eviction til 16 post eviction that are not included in earlier selection 
+
+```{r Category 4}
+
+RS_Or_Cat4 <- Urine_PostPairing %>% 
+  
+  #SAMPLES FROM CAT 4
+  filter(EvictionCategory == "Late" & 
+         is.na(Eviction_GS)) %>% #Once they will have gotten pregnant, the code will have to be changed to "PreFirstConception", I should have Corbeau and Guiness there
+  
+  #EVICTOR
+  filter(EvictionStatus == "Evictor") %>% 
+  
+  #SAMPLES FROM DAY -16 PRE TIL 16 DAYS POST-EVICTION
+  filter(EvictionDayDiff >= -16,
+         EvictionDayDiff <= 16) %>% 
+  
+  #REMOVE SAMPLES IN PRE EVICTION 16
+  filter(!UrineNumber %in% Urine_PreEviction16$UrineNumber) %>% 
+  
+  #REMOVE SAMPLES IN POST PAIRING 16
+  filter(!UrineNumber %in% Urine_PostPairing10$UrineNumber)
+View(RS_Or_Cat4)
+
+```
+
+
+
+##Timing of reproductive activation
+
+For Category 1, it is covered by RS at eviction
+
+```{r Category 1}
+
+```
+
+
+For category 2, it could be that reproductive activation does occur after more than 14 days post-eviction. Thus I could analyse one additional sample every two weeks, plus narrowing down 
+
+```{r Category 2}
+
+RT_Or_Cat2 <- Urine_PostPairing %>% 
+  
+  #SAMPLES FROM CAT 1
+  filter(EvictionCategory == "Early" & 
+         Eviction_GS == "PreFirstConception" |
+           ExperimentalGroup == "Firestone") %>% 
+  
+  #EVICTOR
+  filter(EvictionStatus == "Evictor") %>% 
+  
+  #REMOVE SAMPLES IN POST PAIRING 10
+  filter(!UrineNumber %in% Urine_PostPairing10$UrineNumber) %>% 
+  
+  #REMOVE SAMPLES IN PRE EVICTION 10
+  filter(!UrineNumber %in% Urine_PreEviction10$UrineNumber) %>% 
+  
+  #REMOVE SAMPLES IN POST EVICTION 14
+  filter(!UrineNumber %in% RS_Or_Cat2$UrineNumber) %>% 
+  
+  #TAKE SAMPLES TIL -88 DAYS
+  #Would I need take one sample after?
+  filter(ExperimentalGroup != "Firestone" & ParturitionDayDiff <= -87 &
+         UrineDate < FirstDCParturitionDate | 
+           ExperimentalGroup == "Firestone" & UrineDate <= "2022-09-23")
+
+#Chouffe
+#1 sample/week
+View(RT_Or_Cat2 %>% 
+       filter(ExperimentalGroup == "Chouffe"))
+
+#Darling
+#1 sample/week
+View(RT_Or_Cat2 %>% 
+       filter(ExperimentalGroup == "DarlingBrew"))
+#2 samples
+
+#Firestone
+#1 sample/week
+View(RT_Or_Cat2 %>% 
+       filter(ExperimentalGroup == "Firestone"))
+#13 samples
+
+
+View(DC_Info_F)
+```
+
+
+For category 3, RA can occur anywhere between pairing date and eviction and it is possible that RA does occur earlier than 10 days pre-eviction. Thus, I will analyse one additional sample every two weeks from post-pairing D10 until pre-eviction D-10, then narrow down to highest resolution
+
+```{r Category 3}
+
+RT_Or_Cat3 <- Urine_PostPairing %>% 
+  
+  #SAMPLES FROM CAT 3
+  filter(EvictionCategory == "Late" & 
+         Eviction_GS == "Conception") %>% 
+  
+  #EVICTOR
+  filter(EvictionStatus == "Evictor") %>% 
+  
+  #PRE-EVICTION SAMPLE 
+  filter(EvictionDayDiff<=0) %>% 
+  
+  #REMOVE SAMPLES IN POST PAIRING 10
+  filter(!UrineNumber %in% Urine_PostPairing10$UrineNumber) %>% 
+  
+  #REMOVE SAMPLES IN PRE EVICTION 10
+  filter(!UrineNumber %in% Urine_PreEviction10$UrineNumber) %>% 
+  
+  #REMOVE SAMPLES IN POST EVICTION 14
+  filter(!UrineNumber %in% RS_Or_Cat2$UrineNumber)
+
+#Licher
+View(RT_Or_Cat3 %>% 
+       filter(ExperimentalGroup == "Licher"))
+#5 samples to be analysed
+
+
+#Black label
+View(RT_Or_Cat3 %>% 
+       filter(ExperimentalGroup == "BlackLabel"))
+#10 amples to be analyzed
+```
+
+
+For category 4, RA can occur anywhere between pairing date and -88 days pre-parturition. It is possible that RA does occur earlier than 16 days pre-eviction or more than 16 days after eviction. 
+
+I will analyse one additional sample every two weeks from post-pairing D10 until pre-eviction D-16, then narrow down to highest resolution. 
+
+If RA has not been detected yet, I will extend analyses from D16 post eviction until first succesful conception. 
+
+At the time of coding the succesful conception date has not been established because evictor had not given birth yet
+
+```{r Category 4}
+
+RT_Or_Cat4_Pre <- Urine_PostPairing %>% 
+    
+  #SAMPLES FROM CAT 4
+  filter(EvictionCategory == "Late" & 
+         is.na(Eviction_GS)) %>% #Once they will have gotten pregnant, the code will have to be changed to "PreFirstConception", I should have Corbeau and Guiness there
+  
+  #EVICTOR
+  filter(EvictionStatus == "Evictor") %>% 
+  
+  #POST PAIRING AND PRE EVICTION SAMPLES
+  filter(PairingDayDiff >= 0,
+         EvictionDayDiff <= 0) %>% 
+
+  #REMOVE SAMPLES IN PRE EVICTION 16
+  filter(!UrineNumber %in% Urine_PreEviction16$UrineNumber) %>% 
+  
+  #REMOVE SAMPLES IN POST PAIRING 16
+  filter(!UrineNumber %in% Urine_PostPairing10$UrineNumber)
+
+View(RT_Or_Cat4_Pre)
+
+#Corbeau
+View(RT_Or_Cat4_Pre %>% 
+       filter(ExperimentalGroup == "Corbeau"))
+#13 samples to 14 samples will be needed
+
+
+#Guiness
+View(RT_Or_Cat4_Pre %>% 
+       filter(ExperimentalGroup == "Guinness"))
+#8 to 9 samples will be needed
+
+
+#############################################Post eviction ssample
+
+#I doubt that RA will occur more than 16 days after eviction but in case that is what results suggest
+RT_Or_Cat4_Post <- Urine_PostPairing %>% 
+    
+  #SAMPLES FROM CAT 4
+  filter(EvictionCategory == "Late" & 
+         is.na(Eviction_GS)) %>% #Once they will have gotten pregnant, the code will have to be changed to "PreFirstConception", I should have Corbeau and Guiness there
+  
+  #EVICTOR
+  filter(EvictionStatus == "Evictor") %>% 
+  
+  #POST PAIRING AND PRE EVICTION SAMPLES
+  filter(EvictionDayDiff > 0) %>% 
+  
+  #PRE FIRST CONCEPTION (MANUALLY ESTABLISHED BASED ON EXPECTED DOB)
+  filter(ExperimentalGroup == "Guinness" & UrineDate <= "2023-02-11" |
+           ExperimentalGroup == "Corbeau" & UrineDate <= "2023-02-27") %>% 
+  
+  #REMOVE SAMPLE ABOUT RS AT EVICTION 
+  filter(!UrineNumber %in% RS_Or_Cat4$UrineNumber)
+
+View(RT_Or_Cat4_Post)
+
+
+
+
+
+
+```
+
+
+#Reproductive physiology of evictee
+
+It seems that in the first group samples were only collected up to 14 days post-eviction.
+
+Samples collected at the end of the experiment, during the few weeks before euthanasia could also be used but they are not counted in the current count. 
+
+##Reproductive state at eviction 
+
+For category 1-4, we will retain D1,3,7,14,28,42. There would be the possibility to add later samples.
+
+
+```{r Category 1}
+
+
+RSRA_Ee_Cat1 <- Urine_PostPairing %>% 
+  
+  #GROUP FROM CAT 1
+  filter(ExperimentalGroup %in% Cat1$ExperimentalGroup) %>% 
+  
+  #EVICTOR
+  filter(EvictionStatus == "Evictee") %>% 
+  
+  #KEEP POST EVICTION SAMPLES
+  filter(EvictionDayDiff >=0)
+
+View(RSRA_Ee_Cat1)
+
+
+```
+
+For Category 2-4, we will follow the same strategy as for category 1
+
+##Reproductive activation 
+
+For Category 1 and 2, it is covered by RS at eviction.
+
+For Category 3, evicted females were pregnant so RA may have occured any time until 87 days pre-parturition (they gave birth in their isolation group).
+
+I don't tink that I need samples at eviction as females were pregnant. But I cannot exclude at this stage that this may be required
+
+```{r Category 3}
+
+#Reproductive activation 
+RA_Ee_Cat3 <- Urine_PostPairing %>% 
+  
+  #SAMPLES FROM CAT 3
+  filter(ExperimentalGroup %in% Cat3$ExperimentalGroup) %>% 
+  
+  #EVICTOR
+  filter(EvictionStatus == "Evictee") %>% 
+  
+  #REMOVE SAMPLES IN POST PAIRING 10
+  filter(!UrineNumber %in% Urine_PostPairing10$UrineNumber) %>% 
+  
+  #REMOVE SAMPLES IN PRE EVICTION 10
+  filter(!UrineNumber %in% Urine_PreEviction16$UrineNumber)
+
+View(RA_Ee_Cat3)
+#Licher from D11 to D27 post pairing - do 10, 20, 27 + increased 
+#Black Label D15 to D88 post pairing - do 15, 29, 43, 57, 74, 80, 88 + increased 
+
+```
+
+```{r Category 4}
+
+
+#Reproductive activation 
+RA_Ee_Cat4 <- Urine_PostPairing %>% 
+  
+  #SAMPLES FROM CAT 3
+  filter(ExperimentalGroup %in% Cat4$ExperimentalGroup) %>% 
+  
+  #EVICTOR
+  filter(EvictionStatus == "Evictee") %>% 
+  
+  #REMOVE SAMPLES IN POST PAIRING 10
+  filter(!UrineNumber %in% Urine_PostPairing10$UrineNumber) %>% 
+  
+  #REMOVE SAMPLES IN PRE EVICTION 10
+  filter(!UrineNumber %in% Urine_PreEviction16$UrineNumber)
+
+View(RA_Ee_Cat4)
+#Corbeau only need to do the D-87 = potentially other samples of pregnancy
+
+#Guiness from D11 to D48 post pairing - do 11 and every 14 days after + increased time resolution
+
+```
+
+#Reproductive physiology in non-eviction group 
+
+In Tusker, there is co-breeding with both females producing offspring.
+
+0 additional samples to be collected
+
+```{r Tusker}
+View(DC_Info_F)
+
+Tusker <- Urine_PostPairing %>% 
+  #TUSKER
+  filter(ExperimentalGroup == "Tusker") %>% 
+  #RETAIN PRE-ACTIVATION SAMPLE
+  filter(PairingDayDiff <= -87) %>% 
+  #REMOVE SAMPLES IN POST PAIRING 10
+  filter(!UrineNumber %in% Urine_PostPairing10$UrineNumber) %>% 
+  
+  #REMOVE SAMPLES IN PRE EVICTION 10
+  filter(!UrineNumber %in% Urine_PreEviction16$UrineNumber)
+
+View(Tusker)
+#All samples are already accounted for 
+
+
+```
+
+In Devils Peak there is tolerance of the breeding female towards the non breeding female.
+
+DVF048 bred on the 11 Dec 2022, she successfully conceived 30 days after pairing
+
+DVF061 never got pregnant 
+
+Total estimated 22 samples 
+
+```{r Devil's Peak}
+
+DevilsPeak_Breeder <- Urine_PostPairing %>% 
+  filter(ExperimentalGroup == "DevilsPeak") %>% 
+  filter(ParturitionDayDiff <= -80) %>% 
+  
+  #REMOVE SAMPLES IN POST PAIRING 10
+  filter(!UrineNumber %in% Urine_PostPairing10$UrineNumber) %>% 
+  
+  #REMOVE SAMPLES IN PRE EVICTION 10
+  filter(!UrineNumber %in% Urine_PreEviction16$UrineNumber)
+#we may not be able to detect RA very accurately 
+View(DevilsPeak_Breeder)
+#one could do every second samples and add 1
+#7 samples 
+
+
+#Non-breeder 
+DevilsPeak_NonBreeder <- Urine_PostPairing %>% 
+  filter(AnimalID == "DVF061")
+View(DevilsPeak_NonBreeder)
+#One sample every 2 weeks then increased time resolution 
+#one seample every 2 weeks + what is needed 
+#ca 15 samples
+
+```
+
+
+In wicklowwolf none of the females got pregnant but pairing only occured very recently so may be to early to tell. Expect to have first 3 months every two weeks  + increased resolution. 
+
+Will fall into another category, just unclear which one. 
+
+Predicted 18 samples
+
+```{r Wicklow wolf }
+
+View(DC_Info_F %>% 
+       filter(ExperimentalGroup == "WicklowWolf"))
+
+Wicklow <- Urine_PostPairing %>% 
+  filter(ExperimentalGroup == "WicklowWolf")
+
+
+```
+
+
+##Pre-isolation
+
+Selection will be same for all type of females. 
+
+The original idea is to select the last two samples before isolation. I am unsure how consistent this will be across females and treatment, so it must be checked
+
+It seems that there is a lot of inconsistencies and I am not sure I understand why. The aim was to have two samples before pairing collected after removal of pups and before isolation.
+
+
+
+
+
+#Isolation 
+
+At the moment I decided to go for d1 and every week after, but I wonder if I should not chose first 2 samples and last 2 samples with everything in between with a week interval 
+
+That would increase from 5 to 7 samples per animals 
+
+```{r Isolation}
+
+
+
+#Formatted
+Urine_Isol_Formatted <- Urine_Isol %>% 
+  
+    #SELECT 
+  select(Treatment,
+         ExperimentalGroup,
+         AnimalID,
+         BS_Original,
+         EvictionStatus,
+         IsolationPeriod,
+         IsolationDayDiff,
+         PairingDayDiff,
+         Count,
+         UrineNumber)
+  
+
+View(Urine_Isol_Formatted)
+#363 samples preisolation 
+
+
+#Summary
+Urine_Isol_Summary <- Urine_Isol %>% 
+  group_by(ExperimentalGroup,
+           AnimalID,
+           Treatment,
+           IsolationPeriod) %>% 
+  summarize(Count = n_distinct(UrineDate)) %>% 
+  ungroup()
+View(Urine_Isol_Summary)
+
+
+```
+
+#post-pairing 
+
+I need to find what is the best strategy for hormone analyses. 
+
+i) Early gestation with confirmed conception, when did they usually conceive? 
+
+2) Do we need to do the same for evictee if they do not activate? I guess not 
+
+```{r Data}
+
+names(DC_Urine_F)
+############################################All group 
+Urine_InGroup <- DC_Urine_F %>% 
+  filter(UrineDate > PairingDate & 
+           UrineDate <= EvictionDate | UrineDate > PairingDate & is.na(EvictionDate))
+View(Urine_InGroup)
+#472 samples InGroup 
+#Includes samples where there has been no eviction yet 
+
+#Summary
+Urine_InGroup_Summary <- Urine_InGroup %>% 
+  group_by(ExperimentalGroup,
+           AnimalID,
+           Treatment,
+           PairingDate,
+           InGroupPeriod) %>% 
+  
+  #
+  
+  #ADD COUNT OF SAMPLES 
+  summarize(Count = n_distinct(UrineDate)) %>% 
+  ungroup() %>% 
+  arrange(Treatment, 
+          Count)
+View(Urine_InGroup_Summary)
+
+############################################Eviction Group 
+
+
+
+############################################Early eviction
+
+
+
+############################################Late eviction
+
+
+
+```
+
+##Early eviction
+
+```{r}
+
+names(DC_Info_F)
+
+#How many days before first parturition did eviction occur 
+
+View(DC_Info_F %>% 
+       filter(EvictionCategory == "Early")
+       )
+
+```
+
+
+##Late eviction 
+
+##No eviction 
+
+
+#Post eviction 
+
+```{r}
+
+#######################################PostEviction
+Urine_PostEviction <- DC_Urine_F %>% 
+  filter(UrineDate > EvictionDate)
+View(Urine_PostEviction)
+#731 samples
+
+
+```
+

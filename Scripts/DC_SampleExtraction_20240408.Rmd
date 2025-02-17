@@ -1,0 +1,714 @@
+---
+title: "Untitled"
+output: html_document
+date: "2024-03-20"
+---
+
+#Samples to add on last batch? 
+
+Run all individual graph before making a final decision
+
+
+Conception: 
+
+- 37269: MBF004(Bitburger) Rapid_PreFirst, day-78 pre first, since there is no sample that were collected between day -91 and day -78. 
+
+
+RA:
+
+
+Post Eviction: 
+
+- 33543 WAF045, Blue Moon evictee day 16 post eviction because 33543 (Day 12 post eviction) seem not to have been exported. 
+
+
+
+#package
+
+```{r}
+
+library(tidyverse)
+
+View(Urine_Info_F)
+
+```
+
+
+#Data
+
+I probably need to reupdate these two lists after my pc has done automatic update during the night of the 01 to 02 April 2024 and I am not sure the csv below refelct the latest version.
+
+I guess not because I had made changes to the inventory after that and the date of the file correspond to the latest change 
+
+```{r}
+
+#The Inventory info may not be the latest one
+SampleList <- read.csv("SampleList_20240326.csv")
+View(SampleList_Info)
+
+
+
+SampleList_Info <- read.csv("SampleList_Info_20240326.csv")
+
+View(SampleList_Info %>% 
+       distinct(UrineNumber,.keep_all = TRUE) %>% 
+       filter(!is.na(BoxPosition)))
+#Seems that 649 samples must be analyzed
+
+
+#List of samples extracted so far
+ExtractionList <- read.csv()
+
+View(Urine_)
+
+```
+
+
+#Pre-Pairing samples 
+
+
+##Step 1: Isolation samples 
+
+```{r}
+
+names(SampleList_Info)
+
+#All isolation sample that should be analyzed
+Isol <- SampleList_Info %>% 
+  filter(SampleReason == "Isolation")
+View(Isol)
+
+levels(Isol$BS_Original)
+
+#Check
+View(Isol %>% 
+       filter(UrinePairing_DayDiff >= 0))
+#All Good
+
+
+#Number of isolation samples present at the NPAC
+#To get box and position to get samples out of the freezer 
+Isol_FreezerOut <- Isol %>% 
+  filter(!is.na(BoxID)) %>% 
+  
+  #ARRANGE
+  arrange(BoxID,
+          BoxPosition) %>% 
+  
+  select(AnimalID,
+         UrineNumber,
+         BoxID,
+         BoxPosition) %>%
+  
+  #ADD NEW BOX 
+  mutate(NewBox = case_when(
+    row_number() <= 79 ~ 1,
+    TRUE ~ 2)) %>% 
+  
+  #ADD NEW POSITION
+   mutate(NewPosition = case_when(
+    row_number() <= 79 ~ row_number() + 2,
+    TRUE ~ row_number() - 79
+  ))
+
+
+#Write csv
+write.csv(Isol_FreezerOut,"Isol_FreezerOut_20240321.csv",row.names = FALSE)
+
+
+View(Isol_FreezerOut)
+#127 samples are here in Neuchatel
+
+
+#To place in correct sequence of extraction 
+Isol_ExtractionSequ <- Isol %>% 
+  #REMOVE SAMPLE ABSENT
+  filter(!is.na(BoxID)) %>%
+  #ARRANGE 
+  #Wanted to avoid queen and helpers all being done one separate batch 
+  #I accepted the risk of carry-over effect 
+  arrange(ExperimentalUnit, #Ascending order of group
+          BS_Original, #Helper First then queen
+          AnimalID,
+          UrineNumber) %>% 
+  
+  #SELECT 
+  select(ExperimentalUnit,
+         ExperimentalGroup,
+         Treatment,
+         AnimalID,
+         BS_Original,
+         UrineNumber) %>% 
+  
+  #JOIN TO BOX POSITION AFTER SAMPLES TAKEN OUT OF FREEZER
+  #I take samples out of freezer in ascending order of box and position id
+  left_join(.,Isol_FreezerOut %>% 
+              select(UrineNumber,
+                     NewBox,
+                     NewPosition))
+
+View(Isol_ExtractionSequ)
+
+write.csv(Isol_ExtractionSequ,"Isol_ExtractionSequ_20240321.csv",row.names = FALSE)
+
+```
+
+
+##Step 2: Pre isolation samples
+
+Pre-isolation sample. Out of the 100 that should be available, There are 82 of them here at the NPAC, possibly because some have thawed and were not exported and possibly because some samples were not collected
+
+
+Sample 36751 from TIF039 -16 days isolation seem to not have exported and instead 36757 was exported. I had made a mistake in the inventory assuming 36757 was 36751. I realized the mistake when extracting and I corrected the inventory the 1st April 2024.
+
+I replaced 36751 sample with 36852 - days pre-isolation. 36751 will appear in the list returned below but NOT in the extraction list that I corrected manually
+
+```{r}
+
+names(SampleList_Info)
+
+#All isolation sample that should be analyzed
+PreIsol <- SampleList_Info %>% 
+  filter(SampleReason %in% c("PreIsol1","PreIsol14"))
+View(PreIsol)
+#100 samples including duplicates
+
+
+View(PreIsol %>% 
+       distinct(UrineNumber))
+#88 distinct urine which means that for 6 out of 50 animals the sample closest to isolation day and to day 14 are the same
+
+
+#Check
+View(PreIsol %>% 
+       filter(UrineIsol_DayDiff > 0))
+#All Good
+
+
+#Number of preisolation samples present at the NPAC
+#To get box and position to get samples out of the freezer 
+PreIsol_FreezerOut <- PreIsol %>% 
+  filter(!is.na(BoxID)) %>% 
+  
+  #ARRANGE
+  arrange(BoxID,
+          BoxPosition) %>% 
+  
+  select(AnimalID,
+         SampleReason,
+         UrineNumber,
+         BoxID,
+         BoxPosition) %>%
+  
+  #ADD NEW BOX 
+  mutate(NewBox = case_when(
+    row_number() <= 81 ~ 1,
+    TRUE ~ 2)) %>% 
+  
+  #ADD NEW POSITION
+   mutate(NewPosition = case_when(
+    row_number() <= 81 ~ row_number(),
+    TRUE ~ row_number() - 81
+  ))
+View(PreIsol_FreezerOut)
+#82 samples 
+
+
+#Write csv
+#The list contains the duplicate
+write.csv(PreIsol_FreezerOut,"PreIsol_FreezerOut_20240327.csv",row.names = FALSE)
+
+
+View(PreIsol_FreezerOut %>% 
+       distinct(UrineNumber))
+#71 samples are here in Neuchatel and to be analyzed
+
+
+#To place in correct sequence of extraction 
+PreIsol_ExtractionSequ <- PreIsol %>% 
+  
+  #REMOVE SAMPLE ABSENT
+  filter(!is.na(BoxID)) %>%
+  
+  distinct(UrineNumber,.keep_all = TRUE) %>% 
+  
+  #ARRANGE 
+  #Wanted to avoid queen and helpers all being done one separate batch 
+  #I accepted the risk of carry-over effect 
+  arrange(ExperimentalUnit, #Ascending order of group
+          BS_Original, #Helper First then queen
+          AnimalID,
+          UrineNumber) %>% 
+  
+  #SELECT 
+  select(ExperimentalUnit,
+         ExperimentalGroup,
+         Treatment,
+         AnimalID,
+         BS_Original,
+         UrineNumber) %>% 
+  
+  #JOIN TO BOX POSITION AFTER SAMPLES TAKEN OUT OF FREEZER
+  #I take samples out of freezer in ascending order of box and position id
+  left_join(.,PreIsol_FreezerOut %>% 
+              select(UrineNumber,
+                     NewBox,
+                     NewPosition) %>% 
+              group_by(UrineNumber) %>% 
+              slice_min(NewPosition))
+
+View(PreIsol_ExtractionSequ)
+
+
+write.csv(PreIsol_ExtractionSequ,"PreIsol_ExtractionSequ_20240327.csv",row.names = FALSE)
+
+
+```
+
+
+#Post pairing samples 
+
+```{r}
+
+PostPairing <- SampleList_Info %>%
+  
+  #REMOVE PRE PAIRING SAMPLES
+  #DAYDIFF = 0 WAS CONSIDERED ISOLATION
+  filter(UrinePairing_DayDiff > 0)
+
+
+#How many samples per sampling category
+PostPairing_Count <- PostPairing %>% 
+  group_by(Sampling_Cat) %>% 
+  summarize(Count = n_distinct(UrineNumber)) %>% 
+  ungroup()
+View(PostPairing_Count)
+
+
+#How many samples available on site per category 
+PostPairing_Count_NPAC <- PostPairing %>% 
+  filter(!is.na(BoxPosition)) %>% 
+  group_by(Sampling_Cat) %>% 
+  summarize(Count = n_distinct(UrineNumber)) %>% 
+  ungroup()
+View(PostPairing_Count_NPAC)
+
+```
+
+
+##Step 3 
+
+I will do the Rapid_Conc last as it will allow me to add the samples to increase time resolution of activation.
+
+
+```{r Freezer Out}
+
+#All post-pairing samples, except RapidConc
+Eviction_RapidConc_Out <- PostPairing %>%
+  
+  #RETAIN ALL SAMPLING CAT EXCEPT RAPID CONC AND NONE 
+  filter(Sampling_Cat %in% c("Rapid_PreFirst", "Slow_Conc", "Slow_PreFirst", "Slow_None")) %>% 
+  
+  droplevels() %>% 
+  
+  #ADD SAMPLE REASON COUNT 
+  group_by(UrineNumber) %>% 
+  mutate(ReasonCount = paste0("R",row_number())) %>% 
+  ungroup() %>% 
+  
+  #PIVOT WIDER 
+  pivot_wider(names_from = ReasonCount,values_from = SampleReason)
+
+View(Eviction_RapidConc_Out)
+#287 samples 
+
+
+#Check
+View(Eviction_RapidConc_Out %>% 
+       filter(UrineIsol_DayDiff <= 0))
+#All Good
+
+
+#Number of preisolation samples present at the NPAC
+#To get box and position to get samples out of the freezer 
+RapidConc_Out_FreezerOut <- Eviction_RapidConc_Out %>% 
+  
+  #REMOVE SAMPLES NOT IN NEUCHATEL
+  filter(!is.na(BoxID)) %>% 
+  
+  #ARRANGE
+  arrange(BoxID,
+          BoxPosition) %>% 
+  
+  #SELECT
+  select(AnimalID,
+         R1:R3,
+         UrineNumber,
+         BoxID,
+         BoxPosition) %>% 
+  
+  arrange(BoxID,
+          BoxPosition) %>%
+  
+  #ADD NEW BOX 
+  mutate(NewBox = case_when(
+    row_number() <= 81 ~ 1,
+    row_number() > 81 & row_number() < 163 ~ 2,
+    TRUE ~ 3)) %>% 
+  
+  #ADD NEW POSITION
+   mutate(NewPosition = case_when(
+    row_number() <= 81 ~ row_number(),
+    row_number() > 81 & row_number() < 163 ~ row_number() - 81,
+    TRUE ~ row_number() - 162
+  ))
+
+
+View(RapidConc_Out_FreezerOut)
+#258 unique samples
+
+
+#Write csv
+#The list contains the duplicate
+write.csv(RapidConc_Out_FreezerOut,"RapidConc_Out_FreezerOut_ToPrint_20240402.csv",row.names = FALSE)
+
+```
+
+
+Only retain relevant columns
+
+```{r Relevant columns}
+
+#To place in correct sequence of extraction 
+Eviction_RapidConc_Out_RelCol <- Eviction_RapidConc_Out %>% 
+  
+  #REMOVE SAMPLES NOT IN NEUCHATEL
+  filter(!is.na(BoxID)) %>% 
+  
+  #SELECT 
+  select(Sampling_Cat,
+         ExperimentalUnit,
+         ExperimentalGroup,
+         Treatment,
+         AnimalID,
+         BS_Original,
+         EvictionStatus,
+         UrinePairing_DayDiff,
+         UrineParturition_DayDiff,
+         R1:R3,
+         UrineNumber) %>% 
+  
+  #JOIN TO BOX POSITION AFTER SAMPLES TAKEN OUT OF FREEZER
+  #I take samples out of freezer in ascending order of box and position id
+  left_join(.,RapidConc_Out_FreezerOut %>% 
+              select(UrineNumber,
+                     NewBox,
+                     NewPosition)) %>% 
+  
+  #ADD EXTRACTION VOLUME
+  mutate(Vol = case_when(UrineParturition_DayDiff >= -90 & UrineParturition_DayDiff < 0 ~ 50, 
+                         TRUE ~ 100))
+
+View(Eviction_RapidConc_Out_RelCol)
+
+
+```
+
+
+##Rapid_PreFirst 
+
+MISSING SAMPLES: 
+
+SOFOO6 (Firestone): first conception sample as she died when she gave birth and did not have LitterInfo on which filter for selection was applied. Thus were not returned in selection due to the code
+
+1) 34171
+2) 34256
+3) 34348 
+
+Info would have to be added manually in the relevant table that lead to litter Info if I want these to be returned in SampleList
+
+MBF004 (Bitburger) evictor has no sample between 91 and 78 days pre first. Sample 37269 could be added on last batch (d-78)
+
+
+```{r Rapid_Pre Sequence}
+
+#To check visually
+Rapid_Pre_Check <- Eviction_RapidConc_Out_RelCol %>% 
+  filter(Sampling_Cat == "Rapid_PreFirst") %>% 
+  arrange(ExperimentalUnit,
+          EvictionStatus,
+          UrineNumber)
+View(Rapid_Pre_Check)
+
+#CSV
+write.csv(Rapid_Pre_Check,"Rapid_Pre_Check_20240401.csv",row.names = FALSE)
+
+
+#Organize Extraction Sequence
+Rapid_Pre_ExtractionSequ <- Eviction_RapidConc_Out_RelCol %>% 
+  filter(Sampling_Cat == "Rapid_PreFirst") %>% 
+  arrange(desc(EvictionStatus), #Evictee first as they are unlikely to have high E2 and P4 levels
+          ExperimentalUnit,
+          UrineNumber)
+
+View(Rapid_Pre_ExtractionSequ)
+#52 samples
+
+
+write.csv(Rapid_Pre_ExtractionSequ,"Rapid_Pre_ExtractionSequ_20240402.csv",row.names = FALSE)
+
+```
+
+##Slow Conc 
+
+```{r Slow_Conc Sequence}
+
+#To check visually
+Slow_Conc_Check <- Eviction_RapidConc_Out_RelCol %>% 
+  filter(Sampling_Cat == "Slow_Conc") %>% 
+  arrange(ExperimentalUnit,
+          EvictionStatus,
+          UrineNumber)
+View(Slow_Conc_Check)
+
+#CSV
+write.csv(Slow_Conc_Check,"Slow_Conc_Check_20240401.csv",row.names = FALSE)
+
+
+#Organize Extraction Sequence
+#Perhaps will need to organize differently on batch 
+Slow_Conc_ExtractionSequ <- Eviction_RapidConc_Out_RelCol %>% 
+  filter(Sampling_Cat == "Slow_Conc") %>% 
+  arrange(desc(EvictionStatus), #Evictee first as they are unlikely to have high E2 and P4 levels
+          ExperimentalUnit,
+          UrineNumber)
+
+View(Slow_Conc_ExtractionSequ)
+#52 samples
+
+
+write.csv(Slow_Conc_ExtractionSequ,"Slow_Conc_ExtractionSequ_20240402.csv",row.names = FALSE)
+
+```
+
+
+##Slow pre first and slow none 
+
+Slow pre-first and slow none are being put together. This is a total of 4 groups:
+
+Guinness: 
+Corbeau: Parturition day. 
+WicklowWolf (Slow None). Queen not obv pregnant or lact at eviction
+
+In the 3 cases, the queen activated very early within the first month or so. 
+
+
+Queen always ended up being evicted after 
+
+```{r}
+
+Slow_PreFirst_Check <- Eviction_RapidConc_Out_RelCol %>% 
+  filter(Sampling_Cat %in% c("Slow_PreFirst", "Slow_None")) %>% 
+  arrange(ExperimentalUnit,
+          EvictionStatus,
+          UrineNumber)
+View(Slow_PreFirst_Check)
+
+#CSV
+write.csv(Slow_PreFirst_Check,"Slow_PreFirst_Check_20240403.csv",row.names = FALSE)
+
+
+#I will use this as extraction sequence too
+
+View(Slow_Conc_ExtractionSequ)
+#108 samples
+
+```
+
+
+##Step 4: No eviciction and Rapid_Conc
+
+```{r Freezer Out}
+
+unique(PostPairing$Sampling_Cat)
+
+#All post-pairing samples, except RapidConc
+Eviction_RapidPre_NoEv <- PostPairing %>%
+  
+  #RETAIN ALL SAMPLING CAT EXCEPT RAPID CONC AND NONE 
+  filter(Sampling_Cat %in% c("NoEviction","Rapid_Conc")) %>% 
+  
+  droplevels() %>% 
+  
+  #ADD SAMPLE REASON COUNT 
+  group_by(UrineNumber) %>% 
+  mutate(ReasonCount = paste0("R",row_number())) %>% 
+  ungroup() %>% 
+  
+  #PIVOT WIDER 
+  pivot_wider(names_from = ReasonCount,values_from = SampleReason)
+
+View(Eviction_RapidPre_NoEv)
+#222 samples 
+
+
+#Check
+View(Eviction_RapidPre_NoEv_Out %>% 
+       filter(UrineIsol_DayDiff <= 0))
+#All Good
+
+
+#Number of No + Rapid_Conc samples present at the NPAC
+#To get box and position to get samples out of the freezer 
+Eviction_RapidPre_NoEv_FreezerOut <- Eviction_RapidPre_NoEv %>% 
+  
+  #REMOVE SAMPLES NOT IN NEUCHATEL
+  filter(!is.na(BoxID)) %>% 
+  
+  #ARRANGE
+  arrange(BoxID,
+          BoxPosition) %>% 
+  
+  #SELECT
+  select(AnimalID,
+         R1:R3,
+         UrineNumber,
+         BoxID,
+         BoxPosition) %>% 
+  
+  arrange(BoxID,
+          BoxPosition) %>%
+  
+  #ADD NEW BOX 
+  mutate(NewBox = case_when(
+    row_number() <= 81 ~ 1,
+    row_number() > 81 & row_number() < 163 ~ 2,
+    TRUE ~ 3)) %>% 
+  
+  #ADD NEW POSITION
+   mutate(NewPosition = case_when(
+    row_number() <= 81 ~ row_number(),
+    row_number() > 81 & row_number() < 163 ~ row_number() - 81,
+    TRUE ~ row_number() - 162
+  ))
+
+
+View(Eviction_RapidPre_NoEv_FreezerOut)
+#193 unique samples
+
+
+#Write csv
+#The list contains the duplicate
+write.csv(Eviction_RapidPre_NoEv_FreezerOut,"Eviction_RapidPre_NoEv_FreezerOut_ToPrint_20240405.csv",row.names = FALSE)
+
+```
+
+
+Only retain relevant columns
+
+```{r Relevant columns}
+
+#To place in correct sequence of extraction 
+Eviction_RapidPre_NoEv_Out_RelCol <- Eviction_RapidPre_NoEv %>% 
+  
+  #REMOVE SAMPLES NOT IN NEUCHATEL
+  filter(!is.na(BoxID)) %>% 
+  
+  #SELECT 
+  select(Sampling_Cat,
+         ExperimentalUnit,
+         ExperimentalGroup,
+         Treatment,
+         AnimalID,
+         BS_Original,
+         EvictionStatus,
+         UrinePairing_DayDiff,
+         UrineParturition_DayDiff,
+         R1:R3,
+         UrineNumber) %>% 
+  
+  #JOIN TO BOX POSITION AFTER SAMPLES TAKEN OUT OF FREEZER
+  #I take samples out of freezer in ascending order of box and position id
+  left_join(.,Eviction_RapidPre_NoEv_FreezerOut %>% 
+              select(UrineNumber,
+                     NewBox,
+                     NewPosition)) %>% 
+  
+  #ADD EXTRACTION VOLUME
+  mutate(Vol = case_when(UrineParturition_DayDiff >= -90 & UrineParturition_DayDiff < 0 ~ 50, 
+                         TRUE ~ 100))
+
+View(Eviction_RapidPre_NoEv_Out_RelCol)
+
+
+```
+
+
+##No Eviction 
+
+```{r Extraction sequ}
+
+
+NoEviction_Check <- Eviction_RapidPre_NoEv_Out_RelCol %>% 
+  filter(Sampling_Cat %in% c("NoEviction")) %>% 
+  arrange(ExperimentalUnit,
+          EvictionStatus,
+          UrineNumber)
+View(NoEviction_Check )
+
+#Use the same for extraction seq 
+
+#write csv
+
+```
+
+
+##Rapid_Conc
+
+```{r Extraction sequ}
+
+RapidConc_Check <- Eviction_RapidPre_NoEv_Out_RelCol %>% 
+  filter(Sampling_Cat %in% c("Rapid_Conc")) %>% 
+  arrange(ExperimentalUnit,
+          EvictionStatus,
+          UrineNumber)
+View(RapidConc_Check)
+
+#Use the same for extraction seq 
+
+#write csv
+
+write.csv(RapidConc_Check,"RapidConc_Check.csv", row.names = FALSE)
+
+View(DC_Info_F)
+
+View(DC_Info_Urine_F)
+
+```
+
+
+#Sample check 
+
+##Thawed 
+
+##Forgotten to export
+
+Basically the one that should have been exported and were forgotten. Most important if they were part of the selection. 
+
+Can they be replaced? I guess replace whenever possible 
+
+
+#Visualize 
+
+Can be done in a separate script data explor
+To facilitate process perhaps best to visualize by sample reason as it may may things easier to visualize 
+
+
+#Sample to add 
+
+##Weird values
+
+##RA refinement 
+
+##Replacement 
+

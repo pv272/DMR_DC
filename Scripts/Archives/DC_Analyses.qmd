@@ -1,0 +1,61 @@
+---
+title: "Untitled"
+format: html
+editor: visual
+---
+
+## Aims 
+
+Analyses of DC experiment
+
+## General
+
+## Data
+
+Indicate from which pipeline the data comes from
+
+Behavioural data
+
+Hormonal data
+
+Individual data
+
+Group data
+
+## Data wrangling 
+
+## Reproductive control 
+
+-   aggressive control
+
+-   physiological suppression or self restraint (separate analyses should show which one is more likely)
+
+## Association aggression - Reproductive activation
+
+## Effect of breeding female
+
+-   Sexual behaviours
+
+-   First ovulation
+
+-   Eviction
+
+-   First parturition
+
+## Predictors of type of winning 
+
+-   Sexual behaviours
+
+-   Body-mass
+
+-   Age
+
+-   Hormones
+
+-   Breeding status
+
+## Predictors of suppression or type of
+
+## Are queens evicted when most vulnerable?
+
+## 

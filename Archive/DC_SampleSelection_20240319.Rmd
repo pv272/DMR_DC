@@ -1,0 +1,915 @@
+---
+title: "Untitled"
+output: html_document
+date: "2024-02-06"
+---
+
+#Package
+
+```{r}
+
+library(tidyverse)
+
+```
+
+
+#General 
+
+1) In firestone the breeding female ORF005 died when she gave birth (after she had evicted ORF018). 
+
+After this the male DRM006 was used to found Kasteel. This has consequences for sample selection. 
+
+```{r Data}
+
+names(DC_Info_F)
+
+#DC Info Females
+DC_Info_F <- read.csv("DC_Info_F_20240320.csv") %>% 
+  mutate(BirthDate = ymd(BirthDate),
+         KingRemovalDate = ymd(KingRemovalDate),
+         OriginalGroup_LastParturitionDate = ymd(OriginalGroup_LastParturitionDate),
+         PairingDate = ymd(PairingDate),
+         IsolationDate = ymd(IsolationDate),
+         DeathDate = ymd(DeathDate),
+         LastDate = ymd(LastDate),
+         FirstDCConceptionDate = ymd(FirstDCConceptionDate),
+         FirstDCParturitionDate = ymd(FirstDCConceptionDate),
+         EvictionDate = ymd(EvictionDate))
+names(DC_Info_F)
+
+
+
+#Urine info 
+#DC_Urine_F_20240318.csv
+DC_Info_Urine_F <- read.csv("DC_Info_Urine_F_20240318.csv") %>% 
+  mutate(EvictionDate = ymd(EvictionDate),
+         UrineDate = ymd(UrineDate))
+names(DC_Info_Urine_F)
+
+
+
+#Sample inventory _Inventory
+Inventory <- read.csv("Freezer_Inventory_20240318.csv") %>% 
+  mutate(Date = dmy(Date)) %>% 
+  filter(!is.na(SampleID))
+View(Inventory)
+#8133
+
+
+#Latest inventory 
+Inventory_Latest <- Inventory %>% 
+  group_by(SampleID) %>% 
+  slice_max(Date) %>% 
+  ungroup()
+View(Inventory_Latest)
+#8063
+
+```
+
+
+#Inventory check 
+
+```{r}
+
+
+#Are there samples that have 2 eppendorfs? 
+Inventory_Duplicates <- Inventory_Latest %>% 
+  group_by(SampleID) %>% 
+  filter(n() > 1) %>% 
+  ungroup() %>% 
+  slice_max(Date) %>% 
+  arrange(SampleID) %>% 
+  #ADD COLLECTION INFO 
+  left_join(., Urine_Collected %>% 
+              select(UrineNumber,
+                     AnimalID,
+                     UrineDate,
+                     Eppendorfs), by = c("SampleID" = "UrineNumber")) %>% 
+  relocate(AnimalID:Eppendorfs)
+View(Inventory_Duplicates)
+#1 samples have 2 eppendorfs and still must be corrected. 
+#I sent a mail about it on the 19/03/2024 to Dave and Channen
+
+names(Urine_Collected)
+
+write.csv(Inventory_Duplicates, "Inventory_Duplicates_20240318.csv",row.names = FALSE)
+
+#How many eppendorfs were collected from these samples
+Duplicated  <- Inventory_Duplicates %>% 
+  distinct(SampleID) %>% 
+  #ADD NB OF EPPENDORFS COLLECTED
+  left_join(., Urine_Collected %>% 
+              select(UrineNumber,
+                     Eppendorfs), by = c("SampleID" = "UrineNumber"))
+#Always one, therefore it shold not be possible to have 2 rows for these in the inventory
+
+```
+
+
+#Sample lag 
+
+Normally female should have been sampled approximately once a week during the experiment. 
+
+SOF001 from Corbeau was not sampled for 46 days 
+ORF017 from Wicklow was not sampled for 45 days
+VGF002 from Wicklow was not sampled for 34 days 
+
+
+
+```{r}
+
+SampleLag <- DC_Info_Urine_F %>%
+  filter(UrinePairing_DayDiff >= 0, 
+         EvictionStatus == "Evictee" & UrineEviction_DayDiff <= 10 | EvictionStatus %in% c("InGroup", "Evictor")) %>% 
+  group_by(AnimalID) %>% 
+  mutate(LagUrineDate = lag(UrineDate)) %>% 
+  ungroup() %>% 
+  mutate(LastSampleDelay = UrineDate - LagUrineDate) %>% 
+  filter(!is.na(LastSampleDelay)) %>% 
+  arrange(desc(LastSampleDelay))
+
+View(SampleLag)
+
+```
+
+
+#Question 1: 
+
+Determine differences between BF and NBF when there is no breeding opportunity and determine whether ovulation occurs 
+
+Take 1 sample after two weeks 
+Take last 2 samples before pairing 
+
+3 samples per female = 156 samples 
+
+
+```{r Isolation}
+names(DC_Info_Urine_F)
+
+#two weeks 
+Isol_2W <- DC_Info_Urine_F %>% 
+  filter(UrineIsol_DayDiff >= 14) %>% 
+  group_by(AnimalID) %>% 
+  slice_min(UrineIsol_DayDiff) %>% 
+  ungroup()
+View(Isol_2W)
+#50 samples all good
+
+
+#Pre-pairing
+#In the worse case I could only get the last sample before pairing
+Isol_PrePair <- DC_Info_Urine_F %>% 
+  filter(UrinePairing_DayDiff <= 0) %>% 
+  group_by(AnimalID) %>% 
+  slice_max(UrineIsol_DayDiff, n=2) %>% 
+  ungroup()
+View(Isol_PrePair)
+
+#Check for duplicates
+View(Isol_PrePair %>% 
+       group_by(AnimalID) %>% 
+       mutate(Count = n_distinct(UrineNumber)) %>% 
+       ungroup)
+#ERF002 from Leffe has 2 samples on a given day, but one of them must be wrong because they have been collected almost at the same time. Check side label and only take the first and correct 
+
+```
+
+
+```{r Sel}
+
+Sel_Isol <- bind_rows(Isol_2W,
+                      Isol_PrePair) %>% 
+  distinct(UrineNumber) %>% 
+  mutate(SampleReason = "Isolation")
+View(Sel_Isol)
+#150 samples
+
+```
+
+
+#Question 2
+
+Effect of the presence of:
+
+- The king -> affect the reproductive status of the BF and generates an assymetry in breeding opportunity. => King were only removed in some group, the ones where 2 sub were taken from the sub treatment. Some of these groups were also used to create Queen treatment and thus the king was removed.
+
+There are 5 groups where the Sub were not subjected to an reproductively active queen at the time of isolation
+
+
+
+- The queen.
+
+- The removal from the natal group.
+
+on the hormonal profile of NBF. 
+
+In question 1) only samples post-isolation are selected. Here one would add a longitudinal component to the question. 
+
+This was not part of the original suggestion I had made to Dave and TCB and I thought about adding these at a later stage on the 19/03/2024 after I found out that samples that had been defrosted where not shipped to the NPAC, thereby decreasing the number of samples that could be analyzed.
+
+Before extracting and analysing, assess the number of extra samples and consequences on number of samples compared to the suggestion I had sent to Dave and TCB (if my memory is good it was about 680 samples). If the number of samples is roughly the same I could probably go ahead.
+
+This question basically complements Question by adding samples of NBF and BF while they were still in their original group, specifically 
+
+i) samples of NBF while the BF was reproductively active (the king was present). For this we may only have samples of when the queen was pregnant, but one may ask if it would not be better to select samples at conception.
+
+ii) samples of BF and NBF after the king had been removed
+
+iii) For queen one may also add all samples collected between her last parturition and removal from the group.
+
+
+```{r Pre-Isol }
+
+```
+
+```{r}
+
+```
+
+#Question 3
+
+Effect of breeding opportunity on hormone levels and hormonal correlates of dominance and eviction
+
+## Post-Pairing 
+
+```{r Post paring}
+
+#Samples that were collected on the day of eviction
+#Have asked the project if they should be considered pre or post eviction
+#For now I assume that they are pre-eviction
+EvictionSample <- DC_Info_Urine_F %>% 
+  filter(UrineEviction_DayDiff == 0)
+
+write.csv(EvictionSample, "EvictionSample_ToCheck_20240215.csv", row.names = FALSE)
+#Awaiting answer
+
+
+#Post pairing samples 
+PostPair <- DC_Info_Urine_F %>% 
+  filter(UrinePairing_DayDiff > 0, 
+         UrinePairing_DayDiff <= 10, 
+         UrineEviction_DayDiff <= 0 | is.na(UrineEviction_DayDiff)) 
+  
+View(PostPair)
+#149 samples
+
+
+#Samples pre individuals 
+PostPair_Count <- Sel_PostPair %>% 
+  group_by(ExperimentalGroup, 
+           AnimalID) %>% 
+  summarize(Count = n_distinct(UrineNumber)) %>% 
+  ungroup()
+View(PostPair_Count)
+#Between 1 and 6 samples per individual 
+
+
+View(anti_join(DC_Info_F, PostPair_Count))
+#The only sample that is missing is from Ashai where eviction occured on day 0
+
+View(DC_Info_F)
+
+```
+
+
+```{r Sel}
+
+Sel_PostPair <- PostPair %>%
+  distinct(UrineNumber) %>% 
+  mutate(SampleReason = "PostPair10")
+
+```
+
+
+## Pre eviction 
+
+Pre-Eviction samples not accounted for in post-pairing samples. I have opted for 16 days pre-pairing.
+
+```{r Pre-Eviction }
+
+#Pre-Eviction
+PreEviction <- DC_Info_Urine_F %>%
+  #REMOVE SAMPLES ALREADY COUNTED IN POST PAIRING
+  #filter(!UrineNumber %in% Sel_PostPair$UrineNumber) %>% 
+  #FILTER
+  filter(UrinePairing_DayDiff > 0, 
+         UrineEviction_DayDiff <= 0,
+         UrineEviction_DayDiff >= -16)
+
+View(PreEviction)
+#10 days =  32 samples
+#12 days = 34 samples
+#14 days =  35 samples
+#16 days =  42 samples between 2 and 6 samples per individual at the excpetion of SOF001 that has no samples
+#18 days =  42 samples
+#20 days =  44 samples
+
+
+PreEviction_Count <- PreEviction %>% 
+  group_by(Sampling_Cat,
+           ExperimentalGroup,
+           AnimalID) %>% 
+  summarize(Count = n_distinct(UrineNumber)) %>% 
+  ungroup()
+View(PreEviction_Count)
+#Samples from evictor SOF001 in Corbeau (Slow_Conc) are missing. 
+#I suspect that it is because eviction occurred really late. Weirdly there is no samples between 184 and 230 days post pairing
+
+
+#Ask the project to ask the reason 
+SOF001 <- DC_Info_Urine_F %>% 
+  filter(AnimalID == "SOF001")
+write.csv(SOF001, "SOF001_Urine.csv", row.names = FALSE)
+
+
+#View the samples gathered for slow eviction 
+View(PreEviction %>% 
+       filter(Sampling_Cat %in% c("Slow_Conc","Slow_PreFirst","Slow_None")) %>% 
+       arrange(ExperimentalGroup, AnimalID))
+
+```
+
+
+```{r Sel}
+
+Sel_PreEviction <- PreEviction %>%
+  distinct(UrineNumber) %>% 
+  mutate(SampleReason = "PreEviction16")
+
+
+```
+
+
+##Post eviction 
+
+No samples has been collected post-eviction yet so no need remove samples collected before
+
+```{r Post eviction}
+
+#First sample post eviction
+PostEviction_1 <- DC_Info_Urine_F %>%
+  #FILTER
+  filter(UrineEviction_DayDiff > 0) %>% 
+  group_by(AnimalID) %>% 
+  slice_min(UrineEviction_DayDiff) %>% 
+  ungroup() %>% 
+  mutate(SampleReason = "PostEviction1")
+View(PostEviction_1)
+#All samples have been collected within 2 days of eviction 
+#However, only 43 females meaning that 7 are missing 
+
+#Animals that lack a post-eviction sample 
+PostEviction_MissingID <- DC_Info_F %>% 
+  select(ExperimentalGroup, 
+         AnimalID, 
+         BS_Original,
+         EvictionStatus, 
+         DeathDate,
+         EvictionDate) %>% 
+  left_join(., SamplingCat) %>% 
+  relocate(Sampling_Cat) %>% 
+  anti_join(.,PostEviction_1)
+View(PostEviction_MissingID )
+#Samples are missing from the 3 females where there has been no eviction 
+#VGF002 is missing but it seems because she died on the day of eviction so normal there is no sample
+
+
+#First sample after 14 days post eviction. I cannot really remember why I used that rational. 
+#I think it had to do with when I expected to have last sample of evictor, so the two condition would more or less match
+#I could always add samples at a later stage
+PostEviction_14 <- DC_Info_Urine_F %>%
+  #FILTER
+  filter(UrineEviction_DayDiff >= 14) %>% 
+  group_by(AnimalID) %>% 
+  slice_min(UrineEviction_DayDiff) %>% 
+  ungroup()
+View(PostEviction_14)
+#All samples within 9 days except Darling brew wirth 13 and 15 days 
+#42 individuals so one more missing as after 1 day 
+
+Post14_Count <- PostEviction_14 %>% 
+  group_by(Sampling_Cat,
+           ExperimentalGroup,
+           AnimalID) %>% 
+  summarize(Count = n_distinct(UrineNumber)) %>% 
+  ungroup()
+View(Post14_Count )
+
+```
+
+
+```{r Sel}
+
+#All post eviction samples
+Sel_PostEviction <- bind_rows(PostEviction_1, 
+                              PostEviction_14) %>% 
+  distinct(UrineNumber) %>% 
+  mutate(SampleReason = "PostEviction14")
+View(Sel_PostEviction)
+
+```
+
+
+##Activation-Pregnancy samples
+
+All samples collected between 100 days and 80 days to determine:
+
+- Reproductive activation of some females
+- hormone profile of early gestation. 
+- Effect of presence of other female on gestation profile of early gestation
+
+
+We are only missing sample of one gestation, RSF008 the evictor from Guinness where sampling seem to have been stopped before the first successful conception
+
+```{r First conception}
+
+names(DC_Info_Urine_F)
+
+#Are there evictee that gave birth within 100 days of eviction 
+View(DC_Info_F %>% 
+  filter(EvictionStatus == "Evictee"))
+
+FirstConc <- DC_Info_Urine_F %>% 
+  #REMOVE BITBURGER QUEEN THAT GOT PREGNANT AFTER EVICTION
+  filter(AnimalID != "DRF004") %>% 
+  
+  #REMOVE SAMPLES POST-PAIRING 
+  #I DECIDED TO REMOVE THIS SO I CAN SEE FOR EACH SAMPLE ALL THE REASONS WHY THEY WERE SELECTED 
+  #filter(!UrineNumber %in% Sel_PostPair$UrineNumber) %>%
+
+  #REMOVE SAMPLES PRE-EVICTION
+  #I DECIDED TO REMOVE THIS SO I CAN SEE FOR EACH SAMPLE ALL THE REASONS WHY THEY WERE SELECTED
+  #filter(!UrineNumber %in% Sel_PreEviction$UrineNumber) %>%
+
+  #REMOVE SAMPLES POST-EVICTION
+  #I DECIDED TO REMOVE THIS SO I CAN SEE FOR EACH SAMPLE ALL THE REASONS WHY THEY WERE SELECTED
+  #filter(!UrineNumber %in% Sel_PostEviction$UrineNumber) %>%
+
+  #RETAIN FIRST LITTER 
+  filter(NextLitter_IndCount_Colony == 1) %>%               
+  #FILTER SAMPLES WITHIN TIME RANGE NEEDED 
+  filter(NextParturition_ParturitionDayDiff >=- 100,
+         NextParturition_ParturitionDayDiff <= -80)
+View(Sel_FirstConc)
+#219 samples but that does not take into account samples already selected previously
+#146 if samples already selected are removed
+
+
+#Count of samples
+Sel_FirstConc_Count <- FirstConc %>% 
+  group_by(Sampling_Cat,
+           ExperimentalGroup,
+           EvictionStatus,
+           AnimalID) %>% 
+  summarize(Count = n_distinct(UrineNumber)) %>% 
+  ungroup()
+View(Sel_FirstConc_Count)
+#Seems that evictor from Guiness has no samples RRF008, no samples for almost 90 days around eviction 
+
+View(DC_Info_F)
+
+```
+
+```{r Sel}
+
+Sel_FirstConc <-  FirstConc %>% 
+  distinct(UrineNumber) %>% 
+  mutate(SampleReason = "FirstConc")
+
+```
+
+##Reproductive activation
+
+All females that were evicted early did not successfully conceive in their group 
+
+Rapid_Conc: 
+
+- All samples of evictor are already covered 
+
+- All samples of evictees are already covered for If a female has not activated before eviction she is unlikely to ovulate in the absence of a male. In the worse case we could select a few samples post eviction or before the end of the experiment 
+
+
+Rapid_Pre: 
+
+- For evictor, the date of activation could be anytime until the first successful conception. Take one sample every 14 days from paring until successful conception and then refine. 
+
+- All samples of evictees are already covered for If a female has not activated before eviction she is unlikely to ovulate in the absence of a male. In the worse case we could select a few samples post eviction or before the end of the experiment 
+
+
+Slow_Conc:
+
+- For evictor and evictee, the date of activation could be anytime until the first successful conception. Take one sample every 14 days from paring until successful conception and then refine. 
+
+
+Slow_Pre
+
+- For evictor and evictee, the date of activation could be anytime until the first successful conception. Take one sample every 14 days from paring until successful conception and then refine.  
+
+- For evictor one may wonder whether one wants to analyse past eviction if we think it is quite likely they activated before
+
+
+No eviction
+
+- all females gave birth. Take one sample every 14 days until conception and then refine.    
+
+
+Keep in mind that I have all samples from 100 til 80 days pre-first parturition.
+
+
+I decided to:
+
+1) select the sample that is the closest to each 14 day benchmark, whether it was taken before or after. 
+
+2) If the difference with the 14 days benchmark is the same for the sample collected just before and just after, I selected the sample collected after
+
+3) I wanted to avoid the same sample being selected 2x. How do I do that? 
+
+
+Originally I had decided to go for 21 days but increased the time resolution following Seagers' feedback 
+
+Plot suggest Closest Max is the best, but there will be a few samples to add 
+
+
+```{r 14 days }
+
+RA_Prep_14 <- DC_Info_Urine_F %>%
+  
+  #RETAIN ALL SAMPLES BETWEEN PAIRING AND FIRST SUCCESSFULL CONCEPTION
+      filter(UrinePairing_DayDiff > 0,
+         UrineFirstConception_DayDiff <= 0 | AnimalID == "ORF017",  #because ORF017 in Wicklow has not succesfully conceived when samples were shipped
+         AnimalID != "DRF004") %>%  #evictee from BitBurger that got preg after eviction
+  
+  #DIVIDE 14
+  mutate(Div14 = UrinePairing_DayDiff/14,
+         Div14_1 = floor(Div14),
+         Remainder14 = as.integer(UrinePairing_DayDiff) %% 14)
+
+
+
+#Retain closest sample after each 14 day benchmark
+Min14 <-  RA_Prep_14 %>% 
+  #RETAIN ONLY FIRST SAMPLE OF EACH 14 DAYS PERIOD AND LAST SAMPLE OF PREVIOUS PERIOD
+  group_by(AnimalID, 
+           Div14_1) %>% 
+  slice_min(Remainder14) %>% 
+  ungroup() %>% 
+  mutate(Slice = "Min")
+View(Min14)
+#165 entries
+  
+
+#Retain closest sample before each 14 day benchmark
+Max14 <-  RA_Prep_14 %>% 
+  #RETAIN ONLY FIRST SAMPLE OF EACH 14 DAYS PERIOD AND LAST SAMPLE OF PREVIOUS PERIOD
+  group_by(AnimalID, 
+           Div14_1) %>% 
+  slice_max(Remainder14) %>% 
+  ungroup() %>% 
+  mutate(Slice = "Max")
+View(Max14)
+#166 entries
+
+
+#Merge min and max
+#I will then have to decide for each period whether I am gonna select the Min or the Max
+MinMax14 <- bind_rows(Min14,
+                      Max14) %>% 
+    #ARRANGE
+  arrange(Sampling_Cat,
+          ExperimentalGroup, 
+          EvictionStatus,
+          AnimalID,
+          UrineNumber)
+View(MinMax14)
+#331 entries
+  
+
+#Put the lag info (The max remainder) next to the min remainder for each period.
+#In that way I have the two closest sample of each benchmark next to each other 
+
+MinMax14_Wide <- MinMax14 %>% 
+  # ADD LAG INFO 
+  #For each period we have the min after and min before (Max of previous period) 14 days mark 
+  group_by(AnimalID) %>% 
+  mutate(Difference_Lag = abs(lag(Remainder14)-14),
+         UrineNumber_Lag = lag(UrineNumber),
+         UrineDate_Lag = lag(UrineDate),
+         Period_Lag = lag(Div14_1),
+         Slice_Lag = lag(Slice)) %>% 
+  ungroup() %>% 
+  
+  #RETAIN ONLY MIN OF EACH PERIOD 
+  filter(Slice == "Min") %>% 
+  
+  #REMOVE PERIOD 1
+  filter(Div14_1 != 0)
+#131
+
+
+
+#Out of the 331 entries, how many times is the difference with remainder the same between AFTER and BEFORE benchmark? 
+MinMax14_Equal <-  MinMax14_Wide %>% 
+  filter(Remainder14 == Difference_Lag)
+View(MinMax14_Equal)
+#Out of the 131 entries there are 25  for which there closest sample before and after are the same.
+
+```
+
+What happens if one consistently select the samples after the 14 days benchmark.
+
+```{r Min}
+
+#Min
+Sel_RA_Min <- MinMax14_Wide %>% 
+  
+  #SELECT
+  select(Sampling_Cat,
+         ExperimentalGroup,
+         AnimalID,
+         Div14_1,
+         UrineNumber,
+         UrineDate,
+         Remainder14) %>% 
+  
+  #ADD DIFFERENCE IN DAYS WITH PREVIOUS SAMPLES
+  group_by(AnimalID) %>% 
+  mutate(UrineDayDiff = UrineDate - lag(UrineDate)) %>% 
+  ungroup() %>% 
+  
+  #ADD SELECTION TYPE
+  mutate(SelectionType = "Min")
+View(Sel_RA_Min)
+
+
+#Max
+Sel_RA_Max <- MinMax14_Wide %>% 
+  
+  #SELECT
+  select(Sampling_Cat,
+         ExperimentalGroup,
+         AnimalID,
+         Div14_1,
+         UrineNumber_Lag,
+         UrineDate_Lag,
+         Difference_Lag) %>% 
+  
+  #RENAME
+  rename(UrineNumber = UrineNumber_Lag,
+         UrineDate = UrineDate_Lag,
+         Remainder14 = Difference_Lag) %>% 
+  
+  #ADD DIFFERENCE IN DAYS WITH PREVIOUS SAMPLES
+  group_by(AnimalID) %>% 
+  mutate(UrineDayDiff = UrineDate - lag(UrineDate)) %>% 
+  ungroup() %>% 
+  
+  #ADD SELECTION TYPE
+  mutate(SelectionType = "Max")
+View(Sel_RA_Max)
+
+
+############################Closest Min
+
+#If Min and Max are equal take Min, take min
+
+#Filter min 
+ClosestMin_Min <- MinMax14_Wide %>% 
+  
+  #RETAIN MIN
+  filter(Remainder14 <= Difference_Lag) %>% 
+  
+  #SELECT
+  select(Sampling_Cat,
+         ExperimentalGroup,
+         AnimalID,
+         Div14_1,
+         UrineNumber,
+         UrineDate,
+         Remainder14) 
+  
+
+#Filter max 
+ClosestMin_Max <- MinMax14_Wide %>% 
+  
+  #RETAIN MIN
+  filter(Remainder14 > Difference_Lag) %>% 
+  
+    #SELECT
+  select(Sampling_Cat,
+         ExperimentalGroup,
+         AnimalID,
+         Div14_1,
+         UrineNumber_Lag,
+         UrineDate_Lag,
+         Difference_Lag) %>% 
+  
+  #RENAME
+  rename(UrineNumber = UrineNumber_Lag,
+         UrineDate = UrineDate_Lag,
+         Remainder14 = Difference_Lag)
+  
+
+#Merge
+ClosestMin <- bind_rows(ClosestMin_Min,
+                        ClosestMin_Max) %>% 
+  
+  #ARRANGE
+  arrange(Sampling_Cat,
+          ExperimentalGroup,
+          AnimalID,
+          UrineDate,
+          UrineNumber) %>% 
+  
+  #ADD DIFFERENCE IN DAYS WITH PREVIOUS SAMPLES
+  group_by(AnimalID) %>% 
+  mutate(UrineDayDiff = UrineDate - lag(UrineDate)) %>% 
+  ungroup() %>% 
+  
+  #ADD SELECTION TYPE
+  mutate(SelectionType = "ClosestMin")
+
+
+#############################################Closest Max
+
+#If Min and Max are equal take Min, take max
+#This is teh one I ultimately took for sample 
+
+#Filter min 
+ClosestMax_Min <- MinMax14_Wide %>% 
+  
+  #RETAIN MIN
+  filter(Remainder14 < Difference_Lag) %>% 
+  
+  #SELECT
+  select(Sampling_Cat,
+         ExperimentalGroup,
+         AnimalID,
+         Div14_1,
+         UrineNumber,
+         UrineDate,
+         Remainder14) 
+  
+
+#Filter max 
+ClosestMax_Max <- MinMax14_Wide %>% 
+  
+  #RETAIN MIN
+  filter(Remainder14 >= Difference_Lag) %>% 
+  
+    #SELECT
+  select(Sampling_Cat,
+         ExperimentalGroup,
+         AnimalID,
+         Div14_1,
+         UrineNumber_Lag,
+         UrineDate_Lag,
+         Difference_Lag) %>% 
+  
+  #RENAME
+  rename(UrineNumber = UrineNumber_Lag,
+         UrineDate = UrineDate_Lag,
+         Remainder14 = Difference_Lag)
+  
+
+#Merge
+ClosestMax <- bind_rows(ClosestMax_Min,
+                        ClosestMax_Max) %>% 
+  
+  #ARRANGE
+  arrange(Sampling_Cat,
+          ExperimentalGroup,
+          AnimalID,
+          UrineDate,
+          UrineNumber) %>% 
+  
+  #ADD DIFFERENCE IN DAYS WITH PREVIOUS SAMPLES
+  group_by(AnimalID) %>% 
+  mutate(UrineDayDiff = UrineDate - lag(UrineDate)) %>% 
+  ungroup() %>% 
+  
+  #ADD SELECTION TYPE
+  mutate(SelectionType = "ClosestMax")
+
+
+#Count of samples
+Sel_RA_Count <- Sel_RA %>% 
+  group_by(Sampling_Cat,
+           ExperimentalGroup,
+           EvictionStatus,
+           AnimalID) %>% 
+  summarize(Count = n_distinct(UrineNumber)) %>% 
+  ungroup()
+View(Sel_RA_Count)
+
+
+
+#################################################All selection 
+
+RA_Sel_AllTypes <- bind_rows(Sel_RA_Min,
+                             Sel_RA_Max,
+                             ClosestMin,
+                             ClosestMax)
+View(RA_Sel_AllTypes)
+
+```
+
+
+Based on the plotting, closest Max seems to give the best outcome. 
+
+Thus, I should follow this and will then add the samples to increase the resolution.
+
+```{r Plot RA}
+
+#Plot Remainder 
+#Closest mina nd max are the same and it is what is to be expected 
+#Closest Mina nd Max will differe by how many days between samples
+RA_Remainder_Plot <- ggplot(RA_Sel_AllTypes, aes(x = SelectionType, y=Remainder14)) + 
+  geom_boxplot() +
+  geom_jitter(height = 0, size=2, width = 0.3, alpha = 0.5)
+
+
+#Day diff with outliers
+RA_DayDiff_Plot <- ggplot(RA_Sel_AllTypes, aes(x = SelectionType, y=UrineDayDiff)) + 
+  geom_boxplot(outlier.shape = NA) +
+  geom_jitter(height = 0, size=2, width = 0.3, alpha = 0.5) +
+  geom_hline(yintercept = 14, linetype = "dashed", color = "red")
+
+
+#Day Diff without outliers
+RA_DayDiff_Plot <- ggplot(RA_Sel_AllTypes %>% 
+                            filter(UrineDayDiff <=30), aes(x = SelectionType, y=UrineDayDiff)) + 
+  geom_boxplot(outlier.shape = NA) +
+  geom_jitter(height = 0, size=2, width = 0.3, alpha = 0.5) +
+  geom_hline(yintercept = 14, linetype = "dashed", color = "red")
+  
+
+```
+
+
+```{r Outliers}
+
+#Animals that have not been sampled for incredibly long amount of time 
+DayDiff30 <- 
+
+
+#Animals for which the same sample is used for 2 different time period. 
+
+```
+
+```{r Sel}
+
+names(ClosestMax)
+
+Sel_RA <- ClosestMax %>% 
+  distinct(UrineNumber) %>% 
+  mutate(SampleReason = "RA")
+
+```
+
+
+#All Samples 
+
+All selected samples
+
+```{r All samples}
+
+#All samples to be analysed on the 20/03/2024. At that date no samples before isolation was choses
+
+DC_Analyses <- bind_rows(Sel_Isol, 
+                         Sel_PostPair,
+                         Sel_PreEviction,
+                         Sel_PostEviction,
+                         Sel_FirstConc,
+                         Sel_RA) %>% 
+  
+  #JOIN SAMPLE INFO 
+  left_join(., DC_Info_Urine_F) %>% 
+  
+  #SELECT VARIABLES OF INTEREST 
+  select(Sampling_Cat:EvictionStatus,
+         UrineIsol_DayDiff,
+         UrineEviction_DayDiff,
+         UrineFirstConception_DayDiff,
+         ) %>% 
+  
+  #JOIN INVENTORY 
+  left_join(.,Inventory, by=c("UrineNumber" = "SampleID") )
+
+View(DC_Analyses)
+#830 samples
+#836 after I have 
+
+names(Inventory)
+names(DC_Analyses)
+
+
+#only checking sample 
+View(DC_Analyses %>% 
+       distinct(UrineNumber))
+#658 samples unique 
+
+```
+
+
+#All selected samples that are available in Neuchatel
+

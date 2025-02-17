@@ -1,0 +1,208 @@
+---
+title: "Untitled"
+output: html_document
+date: "2024-03-20"
+---
+
+#package
+
+```{r}
+
+library(tidyverse)
+
+```
+
+
+#Data
+
+```{r}
+
+SampleList <- read.csv()
+  
+SampleList_Info <- read.csv()
+
+#List of samples extracted so far
+ExtractionList <- read.csv()
+
+```
+
+#Analyses 
+
+
+##Step 1: Isolation samples 
+
+```{r}
+
+names(SampleList_Info)
+
+#All isolation sample that should be analyzed
+Isol <- SampleList_Info %>% 
+  filter(SampleReason == "Isolation")
+View(Isol)
+
+levels(Isol$BS_Original)
+
+#Check
+View(Isol %>% 
+       filter(UrinePairing_DayDiff >= 0))
+#All Good
+
+
+#Number of isolation samples present at the NPAC
+#To get box and position to get samples out of the freezer 
+Isol_FreezerOut <- Isol %>% 
+  filter(!is.na(BoxID)) %>% 
+  
+  #ARRANGE
+  arrange(BoxID,
+          BoxPosition) %>% 
+  
+  select(AnimalID,
+         UrineNumber,
+         BoxID,
+         BoxPosition) %>%
+  
+  #ADD NEW BOX 
+  mutate(NewBox = case_when(
+    row_number() <= 79 ~ 1,
+    TRUE ~ 2)) %>% 
+  
+  #ADD NEW POSITION
+   mutate(NewPosition = case_when(
+    row_number() <= 79 ~ row_number() + 2,
+    TRUE ~ row_number() - 79
+  ))
+
+
+#Write csv
+write.csv(Isol_FreezerOut,"Isol_FreezerOut_20240321.csv",row.names = FALSE)
+
+
+View(Isol_FreezerOut)
+#127 samples are here in Neuchatel
+
+
+#To place in correct sequence of extraction 
+Isol_ExtractionSequ <- Isol %>% 
+  #REMOVE SAMPLE ABSENT
+  filter(!is.na(BoxID)) %>%
+  #ARRANGE 
+  #Wanted to avoid queen and helpers all being done one separate batch 
+  #I accepted the risk of carry-over effect 
+  arrange(ExperimentalUnit, #Ascending order of group
+          BS_Original, #Helper First then queen
+          AnimalID,
+          UrineNumber) %>% 
+  
+  #SELECT 
+  select(ExperimentalUnit,
+         ExperimentalGroup,
+         Treatment,
+         AnimalID,
+         BS_Original,
+         UrineNumber) %>% 
+  
+  #JOIN TO BOX POSITION AFTER SAMPLES TAKEN OUT OF FREEZER
+  #I take samples out of freezer in ascending order of box and position id
+  left_join(.,Isol_FreezerOut %>% 
+              select(UrineNumber,
+                     NewBox,
+                     NewPosition))
+
+View(Isol_ExtractionSequ)
+
+write.csv(Isol_ExtractionSequ,"Isol_ExtractionSequ_20240321.csv",row.names = FALSE)
+
+```
+
+
+#Step 2
+
+Pre-isolation sample. Out of the 100 that should be available, There are 82 of them here at the NPAC, possibly because some have thawed and were not exported and possibly because some samples were not collected
+
+```{r}
+
+names(SampleList_Info)
+
+#All isolation sample that should be analyzed
+PreIsol <- SampleList_Info %>% 
+  filter(SampleReason %in% c("PreIsol1","PreIsol14"))
+View(PreIsol)
+#100 samples including duplicates
+
+
+#Check
+View(PreIsol %>% 
+       filter(UrineIsol_DayDiff > 0))
+#All Good
+
+
+#Number of preisolation samples present at the NPAC
+#To get box and position to get samples out of the freezer 
+PreIsol_FreezerOut <- PreIsol %>% 
+  filter(!is.na(BoxID)) %>% 
+  
+  #ARRANGE
+  arrange(BoxID,
+          BoxPosition) %>% 
+  
+  select(AnimalID,
+         UrineNumber,
+         BoxID,
+         BoxPosition) %>%
+  
+  #ADD NEW BOX 
+  mutate(NewBox = case_when(
+    row_number() <= 81 ~ 1,
+    TRUE ~ 2)) %>% 
+  
+  #ADD NEW POSITION
+   mutate(NewPosition = case_when(
+    row_number() <= 81 ~ row_number(),
+    TRUE ~ row_number() - 81
+  ))
+View(PreIsol_FreezerOut)
+
+
+#Write csv
+write.csv(PreIsol_FreezerOut,"PreIsol_FreezerOut_20240327.csv",row.names = FALSE)
+
+
+View(Isol_FreezerOut)
+#127 samples are here in Neuchatel
+
+
+#To place in correct sequence of extraction 
+Isol_ExtractionSequ <- Isol %>% 
+  #REMOVE SAMPLE ABSENT
+  filter(!is.na(BoxID)) %>%
+  #ARRANGE 
+  #Wanted to avoid queen and helpers all being done one separate batch 
+  #I accepted the risk of carry-over effect 
+  arrange(ExperimentalUnit, #Ascending order of group
+          BS_Original, #Helper First then queen
+          AnimalID,
+          UrineNumber) %>% 
+  
+  #SELECT 
+  select(ExperimentalUnit,
+         ExperimentalGroup,
+         Treatment,
+         AnimalID,
+         BS_Original,
+         UrineNumber) %>% 
+  
+  #JOIN TO BOX POSITION AFTER SAMPLES TAKEN OUT OF FREEZER
+  #I take samples out of freezer in ascending order of box and position id
+  left_join(.,Isol_FreezerOut %>% 
+              select(UrineNumber,
+                     NewBox,
+                     NewPosition))
+
+View(Isol_ExtractionSequ)
+
+write.csv(Isol_ExtractionSequ,"Isol_ExtractionSequ_20240321.csv",row.names = FALSE)
+
+
+```
+

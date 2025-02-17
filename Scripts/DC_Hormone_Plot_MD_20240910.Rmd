@@ -1,0 +1,3664 @@
+---
+title: "Untitled"
+output: html_document
+date: "2024-08-14"
+editor_options: 
+  chunk_output_type: console
+---
+
+
+```{r Package}
+
+library(tidyverse)
+
+library(officer)
+library(patchwork)
+
+```
+
+```{r Directory}
+
+
+Dir_DC <- "C:/Users/Philippe/Dropbox/PhD_20150515/Research projects/DMR_HelperBreedingOpp/DC/DC_Analyses"
+
+setwd(Dir_DC)
+
+```
+
+
+A csv where all relevant info and hormone data are joined should probably be generated in the DataPrep folder
+
+```{r Data}
+
+#Group info 
+#The Sampling_Cat of Tusker must be changed to slow_Post as the evictor had produced litter before eviction
+DC_Info_Group <- read.csv("DC_Info_Group_20240710.csv") %>% 
+  mutate(IsolationDate = ymd(IsolationDate),
+         PairingDate = ymd(PairingDate),
+         EvictionDate = ymd(EvictionDate))
+names(DC_Info_Group)
+
+
+DC_Info <- read.csv("DC_Info_20240710.csv")
+
+#Individual info 
+DC_Info_F <- read.csv("DC_Info_F_20240816.csv") %>% 
+  #REFORMAT DATE
+  mutate(KingRemovalDate = ymd(KingRemovalDate),
+         OriginalGroup_LastParturitionDate = ymd(OriginalGroup_LastParturitionDate),
+         IsolationDate = ymd(IsolationDate),
+         PairingDate = ymd(PairingDate),
+         EvictionDate = ymd(EvictionDate)) %>% 
+  #ADD SAMPLING CAT 
+  left_join(., DC_Info_Group %>% 
+              distinct(ExperimentalGroup,
+                       Sampling_Cat)) %>% 
+  
+  #RELEVEL SAMPLING CAT
+  #To be moved to data prep (all releveling should be done there)
+  mutate(Sampling_Cat = fct_relevel(Sampling_Cat,"Rapid_Conc", "Rapid_PreFirst", "Slow_PostFirst","Slow_Conc", "Slow_PreFirst", "Slow_None", "NoEviction")) %>% 
+  relocate(Sampling_Cat) %>% 
+  
+  #ADD QUEEN CAT 
+    #ADD A COLUMN THAT CAN DISTINGUISH Q EE AND OR
+  mutate(QueenType = case_when(Treatment == "Queen" & BS_Original == "Breeder" & EvictionStatus == "Evictor" ~ "QOR",
+                               Treatment == "Queen" & BS_Original == "Helper" & EvictionStatus == "Evictee" ~ "QOR",
+                               Treatment == "Queen" & BS_Original == "Breeder" & EvictionStatus == "Evictee" ~ "QEE",
+                               Treatment == "Queen" & BS_Original == "Helper" & EvictionStatus == "Evictor" ~ "QEE")) %>% 
+  mutate(QueenType = fct_relevel(QueenType, "QOR", "QEE")) %>%
+  
+  #CORRECT EXPERIMENTAL GROUP
+  #Must be corrected in DataPrep 
+  arrange(PairingDate, ExperimentalGroup) %>% 
+  mutate(ExperimentalUnit = match(ExperimentalGroup,
+                                  unique(ExperimentalGroup))) %>% 
+  #ARRANGE 
+  arrange(Sampling_Cat,
+          ExperimentalGroup,
+          EvictionStatus)
+
+
+#Urine info 
+#check what info is there
+DC_Info_Urine_F <- read.csv("DC_Info_Urine_F_20240816.csv") %>% 
+  rename(SampleID = UrineNumber)
+names(DC_Info_Urine_F)
+
+#For Seager 
+names(DC_Info_Urine_F)
+
+ForDave <- DC_Info_Urine_F %>% 
+  inner_join(.,tbl_Extraction %>% 
+               distinct(SampleID,NPACID), by=c("UrineNumber" = "SampleID")) %>% 
+    distinct(ExperimentalGroup,
+           AnimalID,
+           Treatment,
+           UrineDate,
+           UrineEviction_DayDiff,
+           UrineNumber)
+names(tbl_Extraction)
+
+write.csv(ForDave, "SampleList_ForDS.csv",row.names = FALSE)
+
+
+#Hormone concentration 
+#write csv
+DC_Conc_All <-read.csv("DC_Conc_All_20240814.csv")
+
+
+#Parturition info 
+#This will be useful to cap a limit on the urine date 
+DC_Parturition_Info_PostPair <- read.csv("DC_Parturition_Info_PostPair_20240827.csv") %>% 
+  
+  mutate(ParturitionDate = ymd(ParturitionDate)) %>% 
+  
+  #SELECT RELEVANT INFO 
+  select(AnimalID,
+         ParturitionDate,
+         ParturitionColony,
+         IndividualParturitionCount_Colony,
+         ColonyParturitionCount_Colony) %>%
+  
+  #ARRANGE
+  arrange(ParturitionColony,
+          AnimalID,
+          ParturitionDate)
+
+
+View(DC_Parturition_Info_PostPair)
+
+View(DC_Info_Urine_F %>% 
+       distinct(ExperimentalGroup,
+                Sampling_Cat))
+
+#Hormone Info to plot 
+# I will use non-conservative value
+# Remove sample that have not been analysed
+Data_ToPlot <- 
+  
+  #DC_URINE INFO 
+  DC_Info_Urine_F %>%
+  select(-ExperimentalUnit) %>%
+  rename(SampleID = UrineNumber) %>% 
+  
+  #MANUALLY CHANGE SAMPLINGCAT OF TUSKER
+  mutate(Sampling_Cat = case_when(Sampling_Cat == "Tusker" ~ "NoEviction",
+                                  TRUE ~ Sampling_Cat)) %>% 
+  
+  #JOIN CONC
+  inner_join(., DC_Conc_All) %>%
+  
+  #ADD RELEVANT DC_INFO_F
+  left_join(DC_Info_F %>% 
+              distinct(ExperimentalGroup,
+                       OriginalGroup,
+                     EvictionPairingDayDiff,
+                     ExperimentalUnit,
+                     LastOrGroupPartIsol_DayDiff,
+                     QueenType)) %>% 
+  
+  #ONLY RETAIN NON-CONS VALUES FOR PLOTTING
+  filter(ConcType == "NC") %>% 
+  
+  
+  #REMOVE SAMPLEID WITH WRONG LABEL
+  #wrongly assigned to ARF002 in Leffe
+  filter(SampleID != 37356) %>% 
+  
+  #RELEVEL QTCAT
+  mutate(QTcat = fct_relevel(QTcat, "ND", "D", "Q")) %>% 
+  
+  
+  # RELEVEL HORMONES
+  mutate(Hormone = fct_relevel(Hormone, "E2", "P4", "A4", "DHEA", "T", "11KT", "Col", "Con")) %>% 
+  
+  #RELEVEL TREATMENT 
+  mutate(Treatment = fct_relevel(Treatment, "Sub", "Queen")) %>% 
+  
+  #RELEVEL SAMPLING CAT
+  mutate(Sampling_Cat = fct_relevel(Sampling_Cat,"Rapid_Conc", "Rapid_PreFirst", "Slow_PostFirst","Slow_Conc", "Slow_PreFirst", "Slow_None", "NoEviction")) %>% 
+  
+  #ADD EVITION SPEED 
+  mutate(EvictionSpeed = case_when(Sampling_Cat %in% c("Rapid_Conc", "Rapid_PreFirst") ~ "Rapid",
+                                   Sampling_Cat == "NoEviction" ~ "None",
+                                   TRUE ~ "Slow")) %>%
+   mutate(EvictionSpeed = fct_relevel(EvictionSpeed,"Rapid", "Slow", "None")) %>%
+  
+  
+  #ADD HORMONE GROUP
+  mutate(HormoneGroup = case_when(Hormone %in% c("E2", "P4") ~ "E",
+                                  Hormone %in% c("A4", "DHEA") ~ "W",
+                                  Hormone %in% c("T", "11KT") ~ "A",
+                                  Hormone %in% c("Col", "Con") ~ "GC")) %>%
+  mutate(HormoneGroup = fct_relevel(HormoneGroup,"E", "W","A","GC")) %>%
+  
+  #SELECT COLUMNS 
+  select(Sampling_Cat,
+         EvictionSpeed,
+         ExperimentalGroup,
+         OriginalGroup,
+         ExperimentalUnit,
+         Treatment,
+         AnimalID,
+         BS_Original,
+         QueenType,
+         EvictionStatus,
+         LastOrGroupPartIsol_DayDiff,
+         UrineIsol_DayDiff,
+         UrinePairing_DayDiff,
+         UrineEviction_DayDiff,
+         UrineParturition_DayDiff,
+         UrineDate,
+         SampleID,
+         HormoneGroup,
+         Hormone,
+         QTcat,
+         ConcType,
+         Conc)
+
+View(Data_ToPlot)
+Data_ToPlot$Conc
+
+# prevent scientific notations in case
+options(scipen = 999)
+
+```
+
+
+
+#Til Isolation
+
+Until isolation the sample size is reduced because some samples got defrosted 
+
+For the helper treatment, we are losing 2 groups where eviction occurred (Trolls - Rapid Conception, and Darling Brew - Rapid Pre-First). This brings the sample size of groups with eviction from 11 to 9.
+
+For the breeder treatment we are also losing two groups (Tusker - Slow Post First, and Licher - Slow Conception) where the helper evicted the breeder. This brings the sample size down to 10 and from 10 to 8 helpers that evicted the queen.  
+
+##Single Group - Single Hormone - For Trial 
+
+```{r graph settings}
+
+
+#eviction status 
+#Colour
+Col_EvStatus <- setNames(c('grey', 'black', 'black'), c("Evictee","InGroup","Evictor"))
+
+#BS_Original
+#Helper get a joined line, breeder a two dashed line 
+L_BS <- setNames(c('dashed', 'solid'), c("Breeder","Helper"))
+
+#QTcat
+Col_QTcat <- setNames(c('white', 'grey', 'black'), c("ND","D","Q"))
+
+
+```
+
+
+```{r Data}
+
+#Subset the data 
+ToPlot <- Data_ToPlot %>%
+  
+  filter(UrinePairing_DayDiff <= 0) %>% 
+  
+  #ARRANGE
+  #To match what is needed for graph
+  arrange(Treatment, 
+          Sampling_Cat,
+          QueenType,
+          ExperimentalUnit)
+names(ToPlot)
+
+
+#KING REMOVAL INFO 
+#relative to isolation
+KingRemov <- DC_Info_F %>% 
+  mutate(KingRemoval = as.numeric(KingRemovalDate - IsolationDate)) %>% 
+  distinct(ExperimentalGroup,
+           KingRemoval) %>% 
+  filter(ExperimentalGroup == "GROUP") %>% 
+  pull(KingRemoval)
+
+
+#LAST PARTURITION INFO
+#Relative to isolation
+LastPart <- DC_Info_F %>% 
+  mutate(LastParturition = as.numeric(LastOrGroupPartIsol_DayDiff)) %>% 
+  #RETAIN KING REMOVAL DATE OR WITHIN 100 days
+  filter(LastParturition > -100) %>%
+  #DISTINCT
+  distinct(ExperimentalGroup,
+         LastParturition) %>% 
+  filter(ExperimentalGroup == "GROUP") %>% 
+  pull(LastParturition)
+
+
+#PAIRING INFO
+#Relative to isolation
+Pairing <- DC_Info_Group %>% 
+  mutate(Pairing = as.numeric(PairingDate - IsolationDate)) %>% 
+  select(ExperimentalGroup,
+         Pairing) %>% 
+  filter(ExperimentalGroup == "GROUP") %>% 
+  pull(Pairing)
+
+
+#TITLE INFO
+Info <- DC_Info_F %>%
+    filter(ExperimentalGroup == "GROUP") %>%
+    distinct(Sampling_Cat, ExperimentalGroup, OriginalGroup,Treatment, ExperimentalUnit, LastOrGroupPartIsol_DayDiff)
+
+
+```
+
+
+```{r Plot }
+
+p <- ggplot(ToPlot %>% 
+              filter(ExperimentalGroup == "Asahi", Hormone == "E2"), 
+            aes(x = UrineIsol_DayDiff, y = Conc, group = AnimalID, 
+                linetype = BS_Original, fill = QTcat)) +
+  
+  # ADD LINE
+  geom_line(size = 1, aes(color = EvictionStatus)) +
+  
+  # ADD POINTS with shapes for each AnimalID and ensure correct fill and color in the legend
+  geom_point(size = 3, aes(shape = AnimalID), color = "black") +
+  
+  # SET COLORS FOR EVICTION STATUS (LINE COLORS)
+  scale_color_manual(values = Col_EvStatus) +
+  
+  # SET LINE TYPE FOR BS_ORIGINAL
+  scale_linetype_manual(values = L_BS) +
+  
+  # SET COLORS FOR QTcat (POINT FILL COLORS)
+  scale_fill_manual(values = Col_QTcat) +
+  
+  # MANUALLY SET SHAPES FOR EACH AnimalID
+  scale_shape_manual(values = c(21, 24)) +
+  
+  # CUSTOM LEGEND TITLES
+  labs(shape = "AnimalID", fill = "QTcat", color = "Eviction Status") +
+  
+  # OVERRIDE POINT LEGEND TO SHOW THE CORRECT COLORS
+  guides(
+    fill = guide_legend(override.aes = list(shape = 21, color = "black")),
+    color = guide_legend(order = 1),
+    linetype = guide_legend(order = 2),
+    shape = guide_legend(order = 3)
+  ) +
+  
+  # MINIMAL THEME
+  theme_minimal()+
+  
+  #REMOVE LEGEND FROM INDIVIDUAL GRAPH
+  theme(legend.position = "none") 
+
+#ADD VLINE KING REMOVAL
+#RED
+if(length(KingRemov) != 0){
+    #SET NEW MIN X AXIS 
+    new_min_x <- min(KingRemov) - 2  # Adjust to start before the marker
+  p <- p +
+    xlim(c(new_min_x, NA))+
+    geom_vline(xintercept = KingRemov, colour = "red", linetype = "dashed", size = 1)}
+
+
+#ADD VLINE LAST PARTURITION
+#BLUE
+#The selection of parturition to be shown as been made in the filter
+if(length(LastPart) != 0){
+  #SET NEW MIN X AXIS 
+  new_min_x <- min(new_min_x, min(LastPart) - 2)  # Adjust to start before the marker
+  p <- p +
+    xlim(c(new_min_x, NA))+
+    geom_vline(xintercept = LastPart, colour = "blue", linetype = "dashed", size = 1)}
+
+
+  #ADD VLINE PAIRING
+if(length(Pairing) != 0){
+  p <- p +
+    geom_vline(xintercept = Pairing, colour = "Brown", linetype = "dashed", size = 1)}
+
+
+
+# Print the plot
+print(p)
+
+```
+
+
+##Single Group - All Hormone - For Trial
+
+Here I first create several pptx, the solution below for all group is better and I can adjust the code below in case
+
+```{r for loop 1 group all hormones}
+
+
+#CREATE A LIST 
+List <- vector(mode = "list")
+
+
+#Open power point 
+ppt_E <-
+  # Load template
+  read_pptx()
+
+ppt_W <-
+  # Load template
+  read_pptx()
+
+ppt_A <-
+  # Load template
+  read_pptx()
+
+ppt_GC <-
+  # Load template
+  read_pptx()
+
+
+#INFO FOR TITLE
+Info <- DC_Info_F %>%
+    filter(ExperimentalGroup == "Trolls") %>%
+    distinct(Sampling_Cat, ExperimentalGroup, Treatment, ExperimentalUnit)
+  
+
+for(j in (1:length(Hormones_ToPlot))) {
+    
+p <- ggplot(ToPlot %>% 
+              filter(ExperimentalGroup == "Trolls", Hormone == Hormones_ToPlot[j]), 
+            aes(x = UrineIsol_DayDiff, y = Conc, group = AnimalID, 
+                linetype = BS_Original, fill = QTcat)) +
+  
+  # ADD LINE
+  geom_line(size = 1, aes(color = EvictionStatus)) +
+  
+  # ADD POINTS with shapes for each AnimalID and ensure correct fill and color in the legend
+  geom_point(size = 3, aes(shape = AnimalID), color = "black") +
+  
+  # SET COLORS FOR EVICTION STATUS (LINE COLORS)
+  scale_color_manual(values = Col_EvStatus) +
+  
+  # SET LINE TYPE FOR BS_ORIGINAL
+  scale_linetype_manual(values = L_BS) +
+  
+  # SET COLORS FOR QTcat (POINT FILL COLORS)
+  scale_fill_manual(values = Col_QTcat) +
+  
+  # MANUALLY SET SHAPES FOR EACH AnimalID
+  scale_shape_manual(values = c(21, 24)) +
+  
+  # CUSTOM LEGEND TITLES
+  labs(shape = "AnimalID", fill = "QTcat", color = "Eviction Status") +
+  
+  # OVERRIDE POINT LEGEND TO SHOW THE CORRECT COLORS
+  guides(
+    fill = guide_legend(override.aes = list(shape = 21, color = "black")),
+    color = guide_legend(order = 1),
+    linetype = guide_legend(order = 2),
+    shape = guide_legend(order = 3)
+  ) +
+  
+    #Y LABELS
+    ylab(label = paste(Hormones_ToPlot[j],"conc [ng/ml]", sep = " ")) +
+  
+  #SET MARGIN TO MINIMUM
+  theme(plot.margin = margin(0, 0, 0, 0)) +
+        
+  # MINIMAL THEME
+  theme_minimal()+
+  
+  #REMOVE LEGEND FROM INDIVIDUAL GRAPH
+  theme(legend.position = "none") 
+
+#ADD VLINE KING REMOVAL
+#RED
+if(length(KingRemov_Plot) != 0){
+    #SET NEW MIN X AXIS 
+    new_min_x <- min(KingRemov_Plot) - 2  # Adjust to start before the marker
+  p <- p +
+    xlim(c(new_min_x, NA))+
+    geom_vline(xintercept = KingRemov_Plot, colour = "red", linetype = "dashed", size = 1)}
+
+
+#ADD VLINE LAST PARTURITION
+#BLUE
+#The selection of parturition to be shown as been made in the filter
+if(length(LastPart_Plot) != 0){
+  #SET NEW MIN X AXIS 
+  new_min_x <- min(new_min_x, min(LastPart_Plot) - 2)  # Adjust to start before the marker
+  p <- p +
+    xlim(c(new_min_x, NA))+
+    geom_vline(xintercept = LastPart_Plot, colour = "blue", linetype = "dashed", size = 1)}
+
+
+  #ADD VLINE PAIRING
+if(length(Pairing_Plot) != 0){
+  p <- p +
+    geom_vline(xintercept = Pairing_Plot, colour = "Brown", linetype = "dashed", size = 1)}
+
+print(p)
+
+#PLACE FIGURE IN LIST 
+List[[j]] <- p
+
+print(p)
+    
+    
+}
+
+
+  #EXTRACT LEGEND OF FIRST GRAPH
+Legend <- cowplot::get_legend(List[[1]] + theme(legend.position = "right"))
+
+
+#STACK GRAPH VERTICALLY 
+Oestrogen <- cowplot::plot_grid(List[[1]], List[[2]], ncol = 1)
+W <- cowplot::plot_grid(List[[3]], List[[4]], ncol = 1)
+Androgen <- cowplot::plot_grid(List[[5]], List[[6]], ncol = 1)
+GC <- cowplot::plot_grid(List[[7]], List[[8]], ncol = 1)
+
+#COMBINE GRAPH AND LEGENDS
+Oestrogen_L <- cowplot::plot_grid(Oestrogen, Legend, ncol = 2, rel_widths = c(9, 1))
+W_L <- cowplot::plot_grid(W, Legend, ncol = 2, rel_widths = c(9, 1))
+Androgen_L <- cowplot::plot_grid(Androgen, Legend, ncol = 2, rel_widths = c(9, 1))
+GC_L <- cowplot::plot_grid(GC, Legend, ncol = 2, rel_widths = c(9, 1))
+
+  #DRAW TITLE
+Title <- cowplot::ggdraw() + 
+  cowplot::draw_label(
+    paste(Info$Treatment,":",Info$Sampling_Cat,":",Info$ExperimentalGroup,":",Info$ExperimentalUnit,  sep = ""), 
+    fontface = 'bold', 
+    size = 12, 
+    hjust = 0.5
+  )
+
+#COMBINE FINAL GRAPH WITH THE TITLE
+Oestrogen_L_T<- cowplot::plot_grid(Title, Oestrogen_L, ncol = 1, rel_heights = c(0.1, 1))
+W_L_T<- cowplot::plot_grid(Title, W_L, ncol = 1, rel_heights = c(0.1, 1))
+Androgen_L_T<- cowplot::plot_grid(Title, Androgen_L, ncol = 1, rel_heights = c(0.1, 1))
+GC_L_T<- cowplot::plot_grid(Title, GC_L, ncol = 1, rel_heights = c(0.1, 1))
+  
+
+#CREATE AN EDITABLE PLOT 
+  Oestrogen <- rvg::dml(ggobj = Oestrogen_L_T)
+  W <- rvg::dml(ggobj = W_L_T)
+  Androgen <- rvg::dml(ggobj = Androgen_L_T)
+  GC <- rvg::dml(ggobj = GC_L_T)
+  
+
+
+#CREATE POWER POINT
+  #E PP
+  ppt_E <- ppt_E %>% 
+  # ADD SLIDE 
+  add_slide(layout = "Title and Content", master = "Office Theme") %>%
+  # ADD BOXPLOT
+  ph_with(value = Oestrogen,
+          location = ph_location(left = 0, top = 0, width = 10, height = 7.5)) %>%
+  #PRINT PDF
+  print('E_PreP.pptx')
+
+  
+  #WEAK ANDROGEN PP
+  ppt_W <- ppt_W %>% 
+  # ADD SLIDE 
+  add_slide(layout = "Title and Content", master = "Office Theme") %>%
+  # ADD BOXPLOT
+  ph_with(value = Oestrogen,
+          location = ph_location(left = 0, top = 0, width = 10, height = 7.5)) %>%
+  #PRINT PDF
+  print('W_PreP.pptx')
+
+  
+  #ANDROGEN PP
+  ppt_A <- ppt_A %>% 
+  # ADD SLIDE 
+  add_slide(layout = "Title and Content", master = "Office Theme") %>%
+  # ADD BOXPLOT
+  ph_with(value = Oestrogen,
+          location = ph_location(left = 0, top = 0, width = 10, height = 7.5)) %>%
+  #PRINT PDF
+  print('A_PreP.pptx')
+  
+  #GC PP 
+  ppt_GC <- ppt_GC %>% 
+  # ADD SLIDE 
+  add_slide(layout = "Title and Content", master = "Office Theme") %>%
+  # ADD BOXPLOT
+  ph_with(value = Oestrogen,
+          location = ph_location(left = 0, top = 0, width = 10, height = 7.5)) %>%
+  #PRINT PDF
+  print('GC_PreP.pptx')
+
+
+
+
+
+```
+
+
+##All individuals
+
+Show all individuals graphs in power point 
+
+Vertical line red = King removal 
+Vertical blue line = Last parturition 
+Vertical brown line = Pairing 
+
+King Removal is shown for all groups from the breeding treatment where the king was removed and also all the sub treatment that were formed from the same original group.
+
+Last parturition is only shown if it occurred within 100 days. The number of days since last parturition is shown in the title as well as the original group
+
+
+PROBLEM WITH CURRENT CODES
+
+1) I could sort out queen treatment so it shows first groups where queen have evicted, then groups where the queen was evicted. It may help to see some patterns
+
+2) Add a vertical line at isolation => 0
+
+3) only show QTcat of first graph since the legend is being extracted from it. Is there a way to show all levels even the ones for which there is no data? Alternatively the QTcat can be removed from the legend in p (I think one can selectively remove levels of the legend)
+
+
+
+```{r Settings}
+
+#eviction status 
+#Colour
+Col_EvStatus <- setNames(c('grey', 'black', 'black'), c("Evictee","InGroup","Evictor"))
+
+#BS_Original
+#Helper get a joined line, breeder a two dashed line 
+L_BS <- setNames(c('dashed', 'solid'), c("Breeder","Helper"))
+
+#QTcat
+Col_QTcat <- setNames(c('white', 'grey', 'black'), c("ND","D","Q"))
+
+```
+
+
+One must arrange the data in a way that suits the graph. 
+
+```{r Data}
+
+#Subset the data 
+ToPlot <- Data_ToPlot %>% 
+  
+  #RETAIN [] FROM BEFORE PAIRING
+  filter(UrinePairing_DayDiff <= 0) %>% 
+  
+  #ARRANGE
+  #To match what is needed for graph
+  arrange(Treatment, 
+          QueenType,
+          Sampling_Cat,
+          ExperimentalUnit)
+
+levels(ToPlot$QTcat)
+
+```
+
+
+Vector to plot over 
+
+```{r Vector}
+
+
+#Vector of individuals to loop over
+Group_ToPlot <- DC_Info_F %>% 
+  #ARRANGE
+  arrange(Treatment,Sampling_Cat,) %>%
+  #DISTINCT
+  distinct(ExperimentalGroup) %>% 
+  pull() 
+
+
+#Vector of hormone group
+HormonesGroup_ToPlot <- ToPlot %>%
+  #ARRANGE
+  arrange(HormoneGroup) %>% 
+  #DISTINCT
+  distinct(HormoneGroup) %>%
+  pull()
+  
+
+#Vector of hormones 
+Hormones_ToPlot <- ToPlot %>% 
+  #ARRANGE
+  arrange(Hormone) %>%
+  #DISTINCT
+  distinct(Hormone) %>% 
+  pull()
+
+```
+
+I have used the following for data exploration purposes. I have written my thought in DC_Descriptive word document. 
+
+```{r Plot}
+
+#FOR EACH GROUP OF HORMONE 
+#I want one ppt
+for(h in (1:length(HormonesGroup_ToPlot))) {
+
+#CREATE POWER POINT
+ppt <-
+  # Load template
+  read_pptx()
+
+#VECTOR OF HORMONES TO PLOT 
+#would probably be better to have it straight as a vector
+Hormones_ToPlot <- ToPlot %>%
+  filter(HormoneGroup == HormonesGroup_ToPlot[h]) %>% 
+  arrange(Hormone) %>% 
+  distinct(Hormone) %>% 
+  pull()
+
+
+#LOOP OVER EACH EXP GROUP
+for(i in (1: length(Group_ToPlot))) {
+  
+#CREATE LIST
+List <- vector(mode = "list")
+
+#KING REMOVAL INFO 
+#relative to isolation
+KingRemov <- DC_Info_F %>% 
+  mutate(KingRemoval = as.numeric(KingRemovalDate - IsolationDate)) %>% 
+  distinct(ExperimentalGroup,
+           KingRemoval) %>% 
+  filter(ExperimentalGroup == Group_ToPlot[i]) %>% 
+  pull(KingRemoval)
+
+
+#LAST PARTURITION INFO
+#Relative to isolation
+LastPart <- DC_Info_F %>% 
+  mutate(LastParturition = as.numeric(LastOrGroupPartIsol_DayDiff)) %>% 
+  #RETAIN KING REMOVAL DATE OR WITHIN 100 days
+  filter(LastParturition > -100) %>%
+  #DISTINCT
+  distinct(ExperimentalGroup,
+         LastParturition) %>% 
+  filter(ExperimentalGroup == Group_ToPlot[i]) %>% 
+  pull(LastParturition)
+
+
+#PAIRING INFO
+#Relative to isolation
+Pairing <- DC_Info_Group %>% 
+  mutate(Pairing = as.numeric(PairingDate - IsolationDate)) %>% 
+  select(ExperimentalGroup,
+         Pairing) %>% 
+  filter(ExperimentalGroup == Group_ToPlot[i]) %>% 
+  pull(Pairing)
+
+
+#TITLE INFO
+Info <- DC_Info_F %>%
+    filter(ExperimentalGroup == Group_ToPlot[i]) %>%
+    distinct(Sampling_Cat, ExperimentalGroup, OriginalGroup,Treatment,QueenType, ExperimentalUnit, LastOrGroupPartIsol_DayDiff)
+
+
+#LOOP OVER EACH HORMONES
+for(j in (1:length(Hormones_ToPlot))) {
+    
+p <- ggplot(ToPlot %>% 
+              filter(HormoneGroup == HormonesGroup_ToPlot[h], ExperimentalGroup == Group_ToPlot[i], Hormone == Hormones_ToPlot[j]), 
+            aes(x = UrineIsol_DayDiff, y = Conc, group = AnimalID, 
+                linetype = BS_Original, fill = QTcat)) +
+  
+  # ADD LINE
+  geom_line(size = 1, aes(color = EvictionStatus)) +
+  
+  # ADD POINTS with shapes for each AnimalID and ensure correct fill and color in the legend
+  geom_point(size = 3, aes(shape = AnimalID), color = "black") +
+  
+  # SET COLORS FOR EVICTION STATUS (LINE COLORS)
+  scale_color_manual(values = Col_EvStatus) +
+  
+  # SET LINE TYPE FOR BS_ORIGINAL
+  scale_linetype_manual(values = L_BS) +
+  
+  # SET COLORS FOR QTcat (POINT FILL COLORS)
+  scale_fill_manual(values = Col_QTcat) +
+  
+  # MANUALLY SET SHAPES FOR EACH AnimalID
+  scale_shape_manual(values = c(21, 24)) +
+  
+  # CUSTOM LEGEND TITLES
+  labs(shape = "AnimalID", fill = "QTcat", color = "Eviction Status") +
+  
+  # OVERRIDE POINT LEGEND TO SHOW THE CORRECT COLORS
+  guides(
+    fill = guide_legend(override.aes = list(shape = 21, color = "black")),
+    color = guide_legend(order = 1),
+    linetype = guide_legend(order = 2),
+    shape = guide_legend(order = 3)
+  ) +
+  
+    #Y LABELS
+    ylab(label = paste(Hormones_ToPlot[j],"conc [ng/ml]", sep = " ")) +
+  
+  #SET MARGIN TO MINIMUM
+  theme(plot.margin = margin(0, 0, 0, 0)) +
+        
+  # MINIMAL THEME
+  theme_minimal()+
+  
+  #REMOVE LEGEND FROM INDIVIDUAL GRAPH
+  theme(legend.position = "none") 
+
+#ADD VLINE KING REMOVAL
+#RED
+if(length(KingRemov) != 0){
+    #SET NEW MIN X AXIS 
+    new_min_x <- min(KingRemov) - 2  # Adjust to start before the marker
+  p <- p +
+    xlim(c(new_min_x, NA))+
+    geom_vline(xintercept = KingRemov, colour = "red", linetype = "dashed", size = 1)}
+
+
+#ADD VLINE LAST PARTURITION
+#BLUE
+#The selection of parturition to be shown as been made in the filter
+if(length(LastPart) != 0){
+  #SET NEW MIN X AXIS 
+  new_min_x <- min(new_min_x, min(LastPart) - 2)  # Adjust to start before the marker
+  p <- p +
+    xlim(c(new_min_x, NA))+
+    geom_vline(xintercept = LastPart, colour = "blue", linetype = "dashed", size = 1)}
+
+
+  #ADD VLINE PAIRING
+if(length(Pairing) != 0){
+  p <- p +
+    geom_vline(xintercept = Pairing, colour = "Brown", linetype = "dashed", size = 1)}
+
+#PLACE FIGURE IN LIST 
+List[[j]] <- p
+    
+    
+}
+
+
+#EXTRACT LEGEND OF FIRST GRAPH
+Legend <- cowplot::get_legend(List[[1]] + theme(legend.position = "right"))
+
+
+#STACK GRAPH VERTICALLY 
+Stacked <- cowplot::plot_grid(List[[1]], List[[2]], ncol = 1)
+
+
+#COMBINE GRAPH AND LEGENDS
+Stacked_WithL <- cowplot::plot_grid(Stacked, Legend, ncol = 2, rel_widths = c(9, 1))
+
+#DRAW TITLE
+Title <- cowplot::ggdraw() + 
+  cowplot::draw_label(
+    paste(Info$Treatment,":",Info$Sampling_Cat,":",Info$ExperimentalGroup,":",Info$OriginalGroup,":",Info$QueenType,":",Info$ExperimentalUnit,":",Info$LastOrGroupPartIsol_DayDiff,sep = ""), 
+    fontface = 'bold', 
+    size = 12, 
+    hjust = 0.5
+  )
+
+#COMBINE FINAL GRAPH WITH THE TITLE
+FinalPlot <- cowplot::plot_grid(Title, Stacked_WithL, ncol = 1, rel_heights = c(0.1, 1))
+  
+#CREATE AN EDITABLE PLOT 
+FinalPlot_Ed <- rvg::dml(ggobj = FinalPlot)
+
+#ADD GRAPH TO PP
+ppt <- ppt %>% 
+  # ADD SLIDE 
+  add_slide(layout = "Title and Content", master = "Office Theme") %>%
+  # ADD BOXPLOT
+  ph_with(value = FinalPlot_Ed,
+          location = ph_location(left = 0, top = 0, width = 10, height = 7.5))
+  
+}
+
+#PRINT PDF 
+ppt <-   ppt %>% 
+  print(paste("PrePair_",HormonesGroup_ToPlot[h],".pptx",sep = ""))
+
+}
+
+
+names(ToPlot)
+```
+
+
+#Data exploration 
+
+There is redundancy over all these graphs, but each section puts the emphasis on a different aspect. 
+
+a) contrasts in E2, P4 and DHEA seem to be related to differences in breeding status with heper being lower.
+
+b) T and possibly A4 may be higher in helpers
+
+ci) There may be an anticipatory effect of conflict in helpers T in both treatment as T seems to increases following isolation. 
+
+cii) This may also be the case for A4 and DHEA but these effect seem to be restricted to the HT treatment (suppressive effect of of queen? increases not necessary because they are weaker) ?
+
+d) Helpers that evict seem to have higher T than the animal they evict. The difference is larger when they evict a queen. Queen that evict don t have higher T
+
+dii) The same pattern may also occur for A4 and DHEA but the effect doesn t seem as obvious
+
+diii) If there are indeed treatment differences, this may indicate a dampening effect of queen (suppressive yet inneficient effect) or that helper do not need to increase as much because queens are weaker ? Are these differences related to baseline and/or increases
+
+e) the queen that evicts some to have no hormonal traits of the evictors that evict 
+
+```{r Data}
+
+ToPlot <- Data_ToPlot %>% 
+  
+  #RETAIN PRE PAIRING 
+  filter(UrinePairing_DayDiff <= 0) %>% 
+  
+  #ASSIGN PRE AND POST 
+  mutate(SamplingPeriod = case_when(UrineIsol_DayDiff <= 0 ~ "Group",
+                                    TRUE ~ "Pair")) %>% 
+  
+  #ADD ANIMAL CATEGORY
+  mutate(AnimalCat = case_when(Treatment == "Queen" & BS_Original == "Breeder" ~ "Queen",
+                             Treatment == "Queen" & BS_Original == "Helper" ~ "HelperQ",    
+                             Treatment == "Sub" ~ "HelperS")) %>% 
+  
+  #RELEVEL ANIMAL CATEGORY
+  mutate(AnimalCat = fct_relevel(AnimalCat,"Queen","HelperQ","HelperS")) %>% 
+  
+  
+  #ADD EVICTOR CAT
+  mutate(EvictCat = case_when(BS_Original == "Breeder" & EvictionStatus == "Evictor" ~ "QT_Qor",
+                                BS_Original == "Helper" & EvictionStatus == "Evictee" & Treatment == "Queen" ~ "QT_Hee",
+                                BS_Original == "Breeder" & EvictionStatus == "Evictee" ~ "QT_Qee",
+                                BS_Original == "Helper" & EvictionStatus == "Evictor" & Treatment == "Queen" ~ "QT_Hor",
+                                BS_Original == "Helper" & EvictionStatus == "Evictor" & Treatment == "Sub" ~ "HT_Hor",
+                                BS_Original == "Helper" & EvictionStatus == "Evictee" & Treatment == "Sub" ~ "HT_Hee")) %>% 
+  
+  #RELEVEL ANIMAL CATEGORY
+  mutate(EvictCat = fct_relevel(EvictCat,"QT_Qor","QT_Hee","QT_Hor","QT_Qee","HT_Hor","HT_Hee")) %>%
+  
+  
+  #ADD GROUP EVICTION CAT 
+  mutate(EvictCat_Gr = case_when(BS_Original == "Breeder" & EvictionStatus == "Evictor" | BS_Original == "Helper" & EvictionStatus == "Evictee" & Treatment == "Queen" ~ "Qor",
+                                 BS_Original == "Breeder" & EvictionStatus == "Evictee" | BS_Original == "Helper" & EvictionStatus == "Evictor" & Treatment == "Queen" ~ "HorQ",
+                                 Treatment == "Sub" & EvictionStatus != "InGroup" ~ "Hor",
+                                 TRUE ~ "NoOr")) %>% 
+  #RELEVEL GROUP EVICTION CAT
+  mutate(EvictCat_Gr = fct_relevel(EvictCat_Gr,"Qor","HorQ","Hor","NoOr")) %>% 
+  
+  #RELEVEL SAMPLING PERIOD 
+  mutate(SamplingPeriod = fct_relevel(SamplingPeriod,"Group","Pair")) %>% 
+  
+  #SELECT
+  select(ExperimentalGroup,
+         EvictionSpeed,
+         AnimalID,
+         BS_Original,
+         Treatment,
+         EvictionStatus,
+         AnimalCat,
+         EvictCat,
+         EvictCat_Gr,
+         QTcat,
+         SamplingPeriod,
+         SampleID,
+         Hormone,
+         Conc)
+
+```
+
+
+
+##Effect of king removal
+
+At isolation the queen was always present in the original group, and the king was 
+
+- present in 5 groups Bennett, Curie, Goodall, Tinbergen and Watson. 
+
+- absent in the 19 remaining groups.
+
+
+Effect of king disappearance on BF hormonal status:
+
+i) Queen with King (n=5 original group) VS queen without king due to king removal (n= 12). Cannot currently be assessed because we have not selected and extracted sample from queens in group where king had not been removed. Keep in mind that except Watson, these groups had not produced a litter for 6 months. This data could be added. 
+
+ii)  Non-breeding queen without king (pre-pairing) VS breeding queen with king (post-pairing) VS new breeders (post-pairing). The post-pairing results could confounded by pregnancy, would have to restrict within one month of pregnancy probably. This could be done with the data I have.
+
+
+Effect of king disappearance, and thus loss of queen breeding status, on NBF hormonal status?:
+
+i) The only data I have for is helpers pre-isolation in group with no king removal (n=5 group, 12 helpers) and in group with king removal (12 helpers queen treatment and 14 helpers for helper treatment).
+
+ii) Helper before and after king removal. In the queen treatment not much sampling probably before king removal. In the helper treatment, helpers got removed from both king and queen (so effects are confounded) at isolation. 
+
+
+
+##Effect of group removal 
+
+Are there any hormonal changes in response to being removed from the group, i.e. between before and after isolation. 
+
+This could be necessary to assess whether all data prior to pairing could be grouped together.
+
+```{r vector}
+
+Hormones_ToPlot <- Hormones_ToPlot <- ToPlot %>%
+  arrange(Hormone) %>% 
+  distinct(Hormone) %>% 
+  pull()
+
+```
+
+
+E2 Doesnt seem to have any obvious effect.Queen may increase in isolation but may be due to stage of reproductive cycle. At the difference than P4 there is almost no overlap here and the only overlap is due to BF that may not ovulate and helpers with intermediate E2 levels. 
+
+To investigate in relation of effect of queen: It seems that most of intermediate E2 (around 1 or higher; MBF003 in Ghostship has intermediate levels and end up being the evictor, DVF048 in DP also intermediate levels - ovulation? - and also end up evicting) levels are found in the helper treatment, thus in the absence of queen. What do these intermediate levels means? Do they predict eviction? Quicker activation?
+
+P4: Doesnt seem to have any obvious effect. Queen may increase in isolation but may be due to stage of reproductive cycle. BF have much higher levels though there is overlap with helpers, probably because BF have lower P4 at some point of their reproductive cycle. A few helpers have quantifiable levels. Visualise helpers on their own, see below
+
+A4: No effect of pairing it seems, except perhaps in the helper treatment. In the helper treatment, as for T, evictor seem to have higher A4 than evictee and non-eviction. Also breeding status does not seem to have a strong effect tthough helpers may have higher levels overall
+
+DHEA: Possible increase in Queen, but could be due to stage of reproductive cycle. Much higher levels in BF than NBF. Visualize helpers separately, see below
+
+T: No effect in queen, In helper possible increases in response to isolation in the helper of the helper treatment, less so in the queen treatment. Overall helpers may have higher T levels
+
+?Could it be that there is an anticipation of conflict in helpers? and that the anticipation is stronger in future evictors? Or are there differences in baseline before isolation already?
+
+?Could pre-T predict the type of eviction? Slow or rapid? 
+
+=> To investigate in relation to eviction: helpers that got evicted seems to have lower T (especially in the helper treatment), and helpers in groups that did show any eviction show very low 
+
+11KT: No obv effect
+
+Col:perhaps decreases of cortisol in H from QT
+Con: No effect 
+
+T, A4 seem to suggest a relationship with eviction status. Would have to make sure that 11KT does not 
+
+E2, DHEA and P4 seem to be mostly related to breeding status
+
+GC at this stage seem to be of no particular interest, but they could be added to show that helpers that live with queen do no have higher level than helpers living in the absence of a queen. 
+
+
+```{r Plot Q+H}
+
+for(i in(1:length(Hormones_ToPlot))){
+
+# Filter data
+filtered_data <- ToPlot %>% filter(Hormone == Hormones_ToPlot[i])
+
+#Plot the data
+p <- ggplot(filtered_data, aes(x = interaction(SamplingPeriod, AnimalCat), y = Conc)) +
+  
+  # ADD BOXPLOT WITHOUT OUTLIERS
+  geom_boxplot(outlier.shape = NA, position = position_dodge(width = 0.8)) +
+  
+  # ADD JITTERED POINTS COLORED BY EVICTION STATUS
+  geom_jitter(aes(color = EvictionStatus, shape = QTcat), 
+              position = position_jitter(width = 0.3), 
+              size = 1.5, alpha = 0.7) +
+  
+  # REMOVE X-AXIS LABEL
+  xlab("") +
+    
+  # DYNAMICALLY RENAME Y-AXIS LABEL
+  ylab(paste(Hormones_ToPlot[i], "Conc", sep = " "))+
+  
+  # THEME MINIMAL
+  theme_minimal()
+
+print(p)
+
+}
+```
+
+Plot in a similar way but separate helpers and breeders in separate graph 
+
+```{r vector}
+
+BS_ToPlot <- DC_Info_F %>% 
+  distinct(BS_Original) %>% 
+  pull()
+
+```
+
+For breeders:
+No hormone seem to respond to isolation except E2, P4 and DHEA but that may only be related to reproductive stage.
+
+For helpers:
+E2: possible increases in helper treatment but probably due to intermediate levels in DVF048 (DP) and MBF003 in Marabou
+P4: Nothing 
+A4:Possible increases in HT, evictor seem to have higher level in HT
+DHEA: Possible increases in HT, evictor seem to have higher level in HT
+T: likely increase in response tp isolation. Evictor seem to have higher level in both the QT and HT, there is no such increase in queen.
+11KT: Nothing too relevant
+Col: Possible decrease in QT. It could be that evictor have lower Cort 
+Con: Possible decrease in QT.
+
+
+Comparison of QTcat across BS_Original
+
+E2:Changes in proportion
+Queen:the vast majority of sample is Q, a few Q and very few ND. This may be in the female possibly not ovulating (ARF028 from Corbeau)
+H: vast majority of samples ND, a few D and Q
+
+P4: Changes in proportion
+Queen: half sample seemd D the other half Q
+H: Few Q, then equal D and ND
+
+DHEA: changes in proportion
+Queen: Almost all sample are Q, one sample ND
+H: a lot fo sample ND
+
+
+```{r Plot }
+
+for(h in(1:length(BS_ToPlot))){
+
+for(i in(1:length(Hormones_ToPlot))){
+
+# Filter data
+filtered_data <- ToPlot %>% filter(Hormone == Hormones_ToPlot[i],
+                                   BS_Original == BS_ToPlot[h]) 
+
+#Plot the data
+p <- ggplot(filtered_data, aes(x = interaction(SamplingPeriod, AnimalCat), y = Conc)) +
+  
+  # ADD BOXPLOT WITHOUT OUTLIERS
+  geom_boxplot(outlier.shape = NA, position = position_dodge(width = 0.8)) +
+  
+  # ADD JITTERED POINTS COLORED BY EVICTION STATUS
+  geom_jitter(aes(color = EvictionStatus, shape = QTcat), 
+              position = position_jitter(width = 0.3), 
+              size = 1.5, alpha = 0.7) +
+  
+  # REMOVE X-AXIS LABEL
+  xlab("") +
+    
+  # DYNAMICALLY RENAME Y-AXIS LABEL
+  ylab(paste(Hormones_ToPlot[i], "Conc", sep = " "))+
+  # THEME MINIMAL
+  theme_minimal()
+
+print(p)
+
+}
+}
+
+```
+
+
+##Effect of breeding status
+
+In some ways the effect of breeding status was shown above since I separated boxplot of BF and NBF, but here I will show all pre-pairing data together so I have an overview. 
+
+Earlier Data exploration suggest that BF have higher E2, P4 and DHEA and this seems confrimed when one does not differentiate pre and post-isolation
+
+Earlier Data explorations suggest that helpers have higher T than breeders and this is confirmed here. It will be interesting to see whether the difference is statistically significant. It could also be that helpers have higher A4 and one would have to check statistically as well
+
+GC: no difference between reproductive status, but once again suggest that helpers that evict may be less stressed than than the one taht get evicted. 
+
+
+```{r Plot}
+
+
+for(i in(1:length(Hormones_ToPlot))){
+
+# Filter data
+filtered_data <- ToPlot %>% filter(Hormone == Hormones_ToPlot[i])
+
+#Plot the data
+p <- ggplot(filtered_data, aes(x = AnimalCat, y = Conc)) +
+  
+  # ADD BOXPLOT WITHOUT OUTLIERS
+  geom_boxplot(outlier.shape = NA, position = position_dodge(width = 0.8)) +
+  
+  # ADD JITTERED POINTS COLORED BY EVICTION STATUS
+  geom_jitter(aes(color = EvictionStatus, shape = QTcat), 
+              position = position_jitter(width = 0.3), 
+              size = 1.5, alpha = 0.7) +
+  
+  # REMOVE X-AXIS LABEL
+  xlab("") +
+    
+  # DYNAMICALLY RENAME Y-AXIS LABEL
+  ylab(paste(Hormones_ToPlot[i], "Conc", sep = " "))+
+  
+  # THEME MINIMAL
+  theme_minimal()
+
+print(p)
+
+}
+
+
+
+```
+
+
+
+
+##Effect of queen presence
+
+When no distinction is made between pre and pos-isolation the presence of a BF does not seem to have a very strong effect on NBF hormonal profile.
+
+An issue with this is that pre-isolation in HT were in the presence of a queen prior to isolation (7 with king, 6without) and thus this approach is not the best.
+
+Also one must keep in mind that 2 females in the HT have intermediate levels of E2 and one may show signs of ovulation
+
+E2; nothing obv
+P4: higher in absence of BF but small effect size. Could it be due to the two animals with intermediate E2 only?
+A4: higher in absence of BF but small effect size
+DHEA: Possible increase in absence of BF. Could it be due to the two animals with intermediate E2 only?
+T: nothing obv
+11KT nothing obv
+col: nothing obv
+Con: higher in absence of BF but small effect size
+
+```{r Plot }
+
+
+for(i in(1:length(Hormones_ToPlot))){
+
+# Filter data
+filtered_data <- ToPlot %>% filter(Hormone == Hormones_ToPlot[i],
+                                   BS_Original == "Helper")
+
+#Plot the data
+p <- ggplot(filtered_data, aes(x = AnimalCat, y = Conc)) +
+  
+  # ADD BOXPLOT WITHOUT OUTLIERS
+  geom_boxplot(outlier.shape = NA, position = position_dodge(width = 0.8)) +
+  
+  # ADD JITTERED POINTS COLORED BY EVICTION STATUS
+  geom_jitter(aes(color = EvictionStatus, shape = QTcat), 
+              position = position_jitter(width = 0.3), 
+              size = 1.5, alpha = 0.7) +
+  
+  # REMOVE X-AXIS LABEL
+  xlab("") +
+    
+  # DYNAMICALLY RENAME Y-AXIS LABEL
+  ylab(paste(Hormones_ToPlot[i], "Conc", sep = " "))+
+  
+  # THEME MINIMAL
+  theme_minimal()
+
+print(p)
+
+}
+
+
+```
+
+
+It is more correct to differentiate between pre and post-isolation because pre-isolation for HT were in the presence of the queen (7 without king, 6 with king) Thus to truly assess effect of queen, the only valuable contrast may be between post-isolation of HT and QT (because it controls for effect of other group members and presence of king)
+
+E2: Possible effect of queen. Higher E2 in absence of queen. Perhaps due to female that may have ovulated (DVF048, DP). Is that evidence of spontaneous ovulation in absence of queen? We may have had one case in the IB experiment too
+
+P4: Nothing
+
+A4: Possible effect of queen. Higher E2 in absence of queen. Perhaps due to female that may have ovulated (DVF048, DP). Is that evidence of spontaneous ovulation in absence of queen? We may have had one case in the IB experiment too
+
+DHEA: Possible effect of queen. Higher DHEA in absence of queen. Perhaps due to female that may have ovulated (DVF048, DP) or with intermediate levels of E2 
+
+T:Possible effect of queen. General increase following removal from the group
+
+11KT: nothing relevant
+
+Col: Possible decrease in response to isolation in QT. Nothing in HT
+
+Con: Same as Col
+
+
+```{r}
+
+for(i in(1:length(Hormones_ToPlot))){
+
+# Filter data
+filtered_data <- ToPlot %>% filter(Hormone == Hormones_ToPlot[i],
+                                   BS_Original == "Helper")
+
+#Plot the data
+p <- ggplot(filtered_data, aes(x = interaction(SamplingPeriod, AnimalCat), y = Conc)) +
+  
+  # ADD BOXPLOT WITHOUT OUTLIERS
+  geom_boxplot(outlier.shape = NA, position = position_dodge(width = 0.8)) +
+  
+  # ADD JITTERED POINTS COLORED BY EVICTION STATUS
+  geom_jitter(aes(color = EvictionStatus, shape = QTcat), 
+              position = position_jitter(width = 0.3), 
+              size = 1.5, alpha = 0.7) +
+  
+  # REMOVE X-AXIS LABEL
+  xlab("") +
+    
+  # DYNAMICALLY RENAME Y-AXIS LABEL
+  ylab(paste(Hormones_ToPlot[i], "Conc", sep = " "))+
+  
+  # THEME MINIMAL
+  theme_minimal()
+
+print(p)
+
+}
+
+```
+
+
+
+##Effect of Eviction status 
+
+Earlier data exploration suggest that T may increase in response to isolation in helpers (not breeders) and that helpers may overall have higher T levels than breeders. Also it seems that helpers that evict may have higher T. 
+
+Helpers that evict may also have higher A4 and DHEA in the HT
+
+
+###All data 
+
+I will start by a simple plot of all data without distinction between pre and post isolation 
+
+E2: mostly relevant to breeding status not relevant here + should remove breeder values to visualize properly
+
+P4: Mostly relevant to breeding status not relevant here + should remove breeder values to visualize properly
+
+A4: Queen that evict don t have higher A4 levels. H that evict have higher levels than queen they evict but effect size not as big as in HT where Evictor have higher levels than evictees. No eviction group have very low A4
+
+DHEA: Must visualize without queen
+
+T: Same as A4 but differences are much more pronounced. No eviction group have very low T
+
+11KT: May be higher in evictor of HT, not higher in the QT
+
+Col and con not much
+
+
+```{r Plot}
+
+
+for(i in(1:length(Hormones_ToPlot))){
+
+# Filter data
+filtered_data <- ToPlot %>% filter(Hormone == Hormones_ToPlot[i])
+
+#Plot the data
+p <- ggplot(filtered_data, aes(x = EvictCat, y = Conc)) +
+  
+  # ADD BOXPLOT WITHOUT OUTLIERS
+  geom_boxplot(outlier.shape = NA, position = position_dodge(width = 0.8)) +
+  
+  # ADD JITTERED POINTS COLORED BY EVICTION STATUS
+  geom_jitter(aes(color = EvictionStatus, shape = QTcat), 
+              position = position_jitter(width = 0.3), 
+              size = 1.5, alpha = 0.7) +
+  
+  # REMOVE X-AXIS LABEL
+  xlab("") +
+    
+  # DYNAMICALLY RENAME Y-AXIS LABEL
+  ylab(paste(Hormones_ToPlot[i], "Conc", sep = " "))+
+  
+  # THEME MINIMAL
+  theme_minimal()
+
+print(p)
+
+}
+
+```
+
+
+Remove queen levels to facilitate visualization of E2, P4 and DHEA.
+
+DHEA may be higher in evictor in the HT treatment. Also, Helper that evict queen seem to have higher DHEA than helper that are being evicted by queen.
+
+
+```{r Plot no queen}
+
+
+for(i in(1:length(Hormones_ToPlot))){
+
+# Filter data
+filtered_data <- ToPlot %>% filter(Hormone == Hormones_ToPlot[i],
+                                   !EvictCat %in% c("QT_Qor","QT_Qee"))
+
+#Plot the data
+p <- ggplot(filtered_data, aes(x = EvictCat, y = Conc)) +
+  
+  # ADD BOXPLOT WITHOUT OUTLIERS
+  geom_boxplot(outlier.shape = NA, position = position_dodge(width = 0.8)) +
+  
+  # ADD JITTERED POINTS COLORED BY EVICTION STATUS
+  geom_jitter(aes(color = EvictionStatus, shape = QTcat), 
+              position = position_jitter(width = 0.3), 
+              size = 1.5, alpha = 0.7) +
+  
+  # REMOVE X-AXIS LABEL
+  xlab("") +
+    
+  # DYNAMICALLY RENAME Y-AXIS LABEL
+  ylab(paste(Hormones_ToPlot[i], "Conc", sep = " "))+
+  
+  # THEME MINIMAL
+  theme_minimal()
+
+print(p)
+
+}
+
+```
+
+
+I now repeat the same but make a distinction between pre and post isolation in order to assess whether these differences may arise in response to isolation (anticipation of conflict) or the effects may be consistent across context.
+
+First visualize for hormones that are comparable across breeding status and I think the next graph is quite informative 
+
+A4: H that evicts have higher [], queen don't. Increase from G to P in the HT, but same slope.
+
+T: Same than A4 but larger effect size. H that evicts have higher [], queen don't. Increase from G to P in the Helpers that evict in the QT and helpers that evict and are evicted in the HT, yet slope of evictor may be steeper. Interestingly queen are incapable to elevate their T from G to P. Group where there is no eviction also seem to only increase very little
+
+11KT: seems opposite than T patterns. Interestingly in helpers that increase T, 11KT decreases. reflect higher conversion? This only seems true for H that evicts not the one that are evicted 
+
+Con: Irrespective of breeding status evictor seem to decrease their levels and evictee seem to increase their levels. As a comparison no evicton group seem to decrease their []
+
+Col the same seems than for Con seems to hold for Col
+
+In cases where Helper evicted the queen slowly, it doesn t seem there any obvious differences in T with when they evicted them rapidly. 
+
+
+```{r}
+
+summary(ToPlot)
+
+Hormones_ToPlot <- DC_Conc_All %>% 
+  distinct(Hormone) %>% 
+  filter(!Hormone %in% c("E2", "P4", "DHEA")) %>% 
+  pull()
+
+
+
+for(i in(1:length(Hormones_ToPlot))){
+
+# Filter data
+filtered_data <- ToPlot %>% filter(Hormone == Hormones_ToPlot[i])
+
+#Plot the data
+p <- ggplot(filtered_data, aes(x = interaction(SamplingPeriod,EvictCat_Gr), y = Conc)) +
+  
+  # ADD JITTERED POINTS COLORED BY EVICTION STATUS
+  geom_point(aes(color = EvictionStatus, shape = EvictionSpeed), 
+              position = position_jitter(width = 0.3), 
+              size = 1.5, alpha = 0.5) +
+  
+  #ADD LINEAR REGRESSION
+    geom_smooth(aes(group = interaction(EvictCat_Gr, EvictionStatus), color = EvictionStatus), 
+                method = "lm", se = FALSE, size = 0.8, linetype = "solid") +
+  
+  # REMOVE X-AXIS LABEL
+  xlab("") +
+    
+  # DYNAMICALLY RENAME Y-AXIS LABEL
+  ylab(paste(Hormones_ToPlot[i], "Conc", sep = " "))+
+  
+  # THEME MINIMAL
+  theme_minimal() +
+  
+  # ADD LEGEND FOR SHAPES
+    scale_shape_manual(values = c(16, 15, 17))  # 16: circle, 15: square, 17: triangle
+
+print(p)
+
+}
+
+
+unique(interaction(ToPlot$SamplingPeriod,ToPlot$EvictCat_Gr))
+
+
+
+```
+
+
+Now repeat for DHEA 
+
+```{r DHEA}
+
+```
+
+
+
+It would be nice to repeat this graph but showing the difference in [] between evictor and evictee on the y axis.
+
+```{r Data}
+
+```
+
+
+
+##pairwise correlations
+
+
+#Post pairing 
+
+I could start by plotting the rapid eviction. The question is until where I go on the x-axis?
+
+
+```{r Settings}
+
+#eviction status 
+#Colour
+Col_EvStatus <- setNames(c('grey', 'black', 'black'), c("Evictee","InGroup","Evictor"))
+
+#BS_Original
+#Helper get a joined line, breeder a two dashed line 
+L_BS <- setNames(c('dashed', 'solid'), c("Breeder","Helper"))
+
+#QTcat
+Col_QTcat <- setNames(c('white', 'grey', 'black'), c("ND","D","Q"))
+
+```
+
+
+
+##Rapid Conc
+
+
+Data currently available based on initial sample collection should be
+n=12 (9xHT and 3xQT) but 1xHT is missing 
+
+Evictor:
+
+Evictee:
+
+
+```{r Data}
+
+View(DC_Info_F)
+
+#Subset the data 
+ToPlot <- Data_ToPlot %>% 
+  
+  #RETAIN [] FROM BEFORE PAIRING
+  filter(UrineIsol_DayDiff > 1) %>% 
+  
+  #ARRANGE
+  #To match what is needed for graph
+  arrange(Treatment, 
+          QueenType,
+          Sampling_Cat,
+          ExperimentalUnit)
+
+```
+
+
+```{r Vector}
+
+
+#Vector of individuals to loop over
+Group_ToPlot <- DC_Info_F %>% 
+  filter(Sampling_Cat == "Rapid_Conc") %>% 
+  #ARRANGE
+  arrange(Treatment,Sampling_Cat,QueenType) %>%
+  #DISTINCT
+  distinct(ExperimentalGroup) %>% 
+  pull() 
+
+
+#Vector of hormone group
+HormonesGroup_ToPlot <- ToPlot %>%
+  #ARRANGE
+  arrange(HormoneGroup) %>% 
+  #DISTINCT
+  distinct(HormoneGroup) %>%
+  pull()
+  
+
+#Vector of hormones 
+Hormones_ToPlot <- ToPlot %>% 
+  #ARRANGE
+  arrange(Hormone) %>%
+  #DISTINCT
+  distinct(Hormone) %>% 
+  pull()
+
+```
+
+
+```{r Plot}
+
+levels(ToPlot$QueenType)
+
+
+#FOR EACH GROUP OF HORMONE 
+#I want one ppt
+for(h in (1:length(HormonesGroup_ToPlot))) {
+
+#CREATE POWER POINT
+ppt <-
+  # Load template
+  read_pptx()
+
+#VECTOR OF HORMONES TO PLOT 
+#would probably be better to have it straight as a vector
+Hormones_ToPlot <- ToPlot %>%
+  filter(HormoneGroup == HormonesGroup_ToPlot[h]) %>% 
+  arrange(Hormone) %>% 
+  distinct(Hormone) %>% 
+  pull()
+
+
+#LOOP OVER EACH EXP GROUP
+for(i in (1: length(Group_ToPlot))) {
+  
+#CREATE LIST
+List <- vector(mode = "list")
+
+
+#EVICTION INFO
+#Relative to isolation
+Eviction <- DC_Info_F %>% 
+  filter(Sampling_Cat == "Rapid_Conc") %>% 
+  distinct(ExperimentalGroup,
+           EvictionPairingDayDiff) %>% 
+  rename(Eviction = EvictionPairingDayDiff) %>% 
+  filter(ExperimentalGroup == Group_ToPlot[i]) %>% 
+  pull(Eviction)
+
+
+#TITLE INFO
+Info <- DC_Info_F %>%
+    filter(ExperimentalGroup == Group_ToPlot[i]) %>%
+    filter(Sampling_Cat == "Rapid_Conc") %>% 
+    distinct(Sampling_Cat, ExperimentalGroup, OriginalGroup,Treatment,QueenType, ExperimentalUnit, LastOrGroupPartIsol_DayDiff)
+
+
+#LOOP OVER EACH HORMONES
+for(j in (1:length(Hormones_ToPlot))) {
+    
+p <- ggplot(ToPlot %>% 
+              filter(HormoneGroup == HormonesGroup_ToPlot[h], 
+                     ExperimentalGroup == Group_ToPlot[i], 
+                     Hormone == Hormones_ToPlot[j],
+                     UrineEviction_DayDiff <= 70,
+                     Sampling_Cat == "Rapid_Conc") %>% 
+              arrange(Treatment, 
+                      QueenType), #Could be done in data 
+            aes(x = UrinePairing_DayDiff, y = Conc, group = AnimalID, 
+                linetype = BS_Original, fill = QTcat)) +
+  
+  # ADD LINE
+  geom_line(size = 1, aes(color = EvictionStatus)) +
+  
+  # ADD POINTS with shapes for each AnimalID and ensure correct fill and color in the legend
+  geom_point(size = 3, aes(shape = AnimalID), color = "black") +
+  
+  # ADD LABELS FOR UrineParturition_DayDiff
+  geom_text(aes(label = UrineParturition_DayDiff), 
+            vjust = -1, hjust = 0.5, size = 3, color = "black") +
+  
+  # SET COLORS FOR EVICTION STATUS (LINE COLORS)
+  scale_color_manual(values = Col_EvStatus) +
+  
+  # SET LINE TYPE FOR BS_ORIGINAL
+  scale_linetype_manual(values = L_BS) +
+  
+  # SET COLORS FOR QTcat (POINT FILL COLORS)
+  scale_fill_manual(values = Col_QTcat) +
+  
+  # MANUALLY SET SHAPES FOR EACH AnimalID
+  scale_shape_manual(values = c(21, 24)) +
+  
+  # CUSTOM LEGEND TITLES
+  labs(shape = "AnimalID", fill = "QTcat", color = "Eviction Status") +
+  
+  # OVERRIDE POINT LEGEND TO SHOW THE CORRECT COLORS
+  guides(
+    fill = guide_legend(override.aes = list(shape = 21, color = "black")),
+    color = guide_legend(order = 1),
+    linetype = guide_legend(order = 2),
+    shape = guide_legend(order = 3)
+  ) +
+  
+    #Y LABELS
+    ylab(label = paste(Hormones_ToPlot[j],"conc [ng/ml]", sep = " ")) +
+  
+  #SET MARGIN TO MINIMUM
+  theme(plot.margin = margin(0, 0, 0, 0)) +
+        
+  # MINIMAL THEME
+  theme_minimal()+
+  
+  #REMOVE LEGEND FROM INDIVIDUAL GRAPH
+  theme(legend.position = "none") 
+
+
+  #ADD VLINE PAIRING
+  p <- p +
+    geom_vline(xintercept = 0, colour = "black", linetype = "dashed", size = 1)
+
+  #ADD VLINE EVICTION
+if(length(Eviction) >= 0){
+  p <- p +
+    geom_vline(xintercept = Eviction, colour = "red", linetype = "dashed", size = 1)}
+
+#PLACE FIGURE IN LIST 
+List[[j]] <- p
+    
+    
+}
+
+
+#EXTRACT LEGEND OF FIRST GRAPH
+Legend <- cowplot::get_legend(List[[1]] + theme(legend.position = "right"))
+
+
+#STACK GRAPH VERTICALLY 
+Stacked <- cowplot::plot_grid(List[[1]], List[[2]], ncol = 1)
+
+
+#COMBINE GRAPH AND LEGENDS
+Stacked_WithL <- cowplot::plot_grid(Stacked, Legend, ncol = 2, rel_widths = c(9, 1))
+
+#DRAW TITLE
+Title <- cowplot::ggdraw() + 
+  cowplot::draw_label(
+    paste(Info$Treatment,":",Info$Sampling_Cat,":",Info$ExperimentalGroup,":",Info$OriginalGroup,":",Info$QueenType,":",Info$ExperimentalUnit, sep = ""), 
+    fontface = 'bold', 
+    size = 12, 
+    hjust = 0.5
+  )
+
+#COMBINE FINAL GRAPH WITH THE TITLE
+FinalPlot <- cowplot::plot_grid(Title, Stacked_WithL, ncol = 1, rel_heights = c(0.1, 1))
+  
+#CREATE AN EDITABLE PLOT 
+FinalPlot_Ed <- rvg::dml(ggobj = FinalPlot)
+
+#ADD GRAPH TO PP
+ppt <- ppt %>% 
+  # ADD SLIDE 
+  add_slide(layout = "Title and Content", master = "Office Theme") %>%
+  # ADD BOXPLOT
+  ph_with(value = FinalPlot_Ed,
+          location = ph_location(left = 0, top = 0, width = 10, height = 7.5))
+  
+}
+
+#PRINT PDF 
+ppt <-   ppt %>% 
+  print(paste("PostPair_RC_",HormonesGroup_ToPlot[h],".pptx",sep = ""))
+
+}
+
+
+```
+
+
+
+##Rapid PreFirst
+
+Data currently available based on initial sample collection should be
+
+Evictor:
+
+Evictee:
+
+```{r ToPlot}
+
+View(DC_Info_F)
+
+#FIRST PARTURITION IN GROUP 
+FirstParturition <- DC_Parturition_Info_PostPair %>% 
+  rename(ExperimentalGroup = ParturitionColony) %>% 
+  group_by(ExperimentalGroup) %>% 
+  slice_min(ParturitionDate) %>% 
+  ungroup() %>% 
+  rename(FirstPartDate_Group = ParturitionDate) %>%
+  select(ExperimentalGroup,
+         FirstPartDate_Group,
+         AnimalID) %>%
+  #MANUAL ADDITION FIRESTONE 
+  bind_rows(., tibble(ExperimentalGroup = "Firestone",
+                      FirstPartDate_Group = ymd("2022-12-20"),
+                      AnimalID = "SOF006")) %>% 
+  #ADD MAX DATE OF URINE TO BE SHOWN 
+  mutate(MaxDate = FirstPartDate_Group - 50) %>% 
+  select(-AnimalID)
+View(FirstParturition)
+
+View(Litter_Info)
+View(DC_Info_F)
+
+
+ToPlot <- Data_ToPlot %>% 
+  #ADD FIRST PARTURITION IN GROUP
+  left_join(., FirstParturition) %>% 
+  #RETAIN SAMPLES AFTER ISOLATION 
+  filter(UrineIsol_DayDiff > 1) %>% 
+  #RETAIN SAMPLES < MAX DATE 
+  filter(UrineDate <= MaxDate) %>% 
+  #RETAIN SAMPLE OF CORRECT CATEGORY
+  filter(Sampling_Cat == "Rapid_PreFirst") %>% 
+  #ARRANGE
+  #To match what is needed for graph
+  arrange(Treatment, 
+          QueenType,
+          Sampling_Cat,
+          ExperimentalUnit)
+
+View(ToPlot)
+
+
+
+```
+
+```{r vector}
+
+#Vector of individuals to loop over
+Group_ToPlot <- DC_Info_F %>% 
+  filter(Sampling_Cat == "Rapid_PreFirst") %>% 
+  #ARRANGE
+  arrange(Treatment,Sampling_Cat,QueenType) %>%
+  #DISTINCT
+  distinct(ExperimentalGroup) %>% 
+  pull() 
+
+
+```
+
+
+```{r}
+
+#FOR EACH GROUP OF HORMONE 
+#I want one ppt
+for(h in (1:length(HormonesGroup_ToPlot))) {
+
+#CREATE POWER POINT
+ppt <-
+  # Load template
+  read_pptx()
+
+#VECTOR OF HORMONES TO PLOT 
+#would probably be better to have it straight as a vector
+Hormones_ToPlot <- ToPlot %>%
+  filter(HormoneGroup == HormonesGroup_ToPlot[h]) %>% 
+  arrange(Hormone) %>% 
+  distinct(Hormone) %>% 
+  pull()
+
+
+#LOOP OVER EACH EXP GROUP
+for(i in (1: length(Group_ToPlot))) {
+  
+#CREATE LIST
+List <- vector(mode = "list")
+
+
+#EVICTION INFO
+#Relative to isolation
+Eviction <- DC_Info_F %>% 
+  filter(Sampling_Cat == "Rapid_PreFirst") %>% 
+  distinct(ExperimentalGroup,
+           EvictionPairingDayDiff) %>% 
+  rename(Eviction = EvictionPairingDayDiff) %>% 
+  filter(ExperimentalGroup == Group_ToPlot[i]) %>% 
+  pull(Eviction)
+
+
+#TITLE INFO
+Info <- DC_Info_F %>%
+    filter(ExperimentalGroup == Group_ToPlot[i]) %>%
+    filter(Sampling_Cat == "Rapid_PreFirst") %>% 
+    distinct(Sampling_Cat, ExperimentalGroup, OriginalGroup,Treatment,QueenType, ExperimentalUnit, LastOrGroupPartIsol_DayDiff)
+
+
+#LOOP OVER EACH HORMONES
+for(j in (1:length(Hormones_ToPlot))) {
+    
+p <- ggplot(ToPlot %>% 
+              filter(HormoneGroup == HormonesGroup_ToPlot[h], 
+                     ExperimentalGroup == Group_ToPlot[i], 
+                     Hormone == Hormones_ToPlot[j]) %>% 
+              arrange(Treatment, 
+                      QueenType), #Could be done in data 
+            aes(x = UrinePairing_DayDiff, y = Conc, group = AnimalID, 
+                linetype = BS_Original, fill = QTcat)) +
+  
+  # ADD LINE
+  geom_line(size = 1, aes(color = EvictionStatus)) +
+  
+  # ADD POINTS with shapes for each AnimalID and ensure correct fill and color in the legend
+  geom_point(size = 3, aes(shape = AnimalID), color = "black") +
+  
+  # ADD LABELS FOR UrineParturition_DayDiff
+  geom_text(aes(label = UrineParturition_DayDiff), 
+            vjust = -1, hjust = 0.5, size = 3, color = "black") +
+  
+  # SET COLORS FOR EVICTION STATUS (LINE COLORS)
+  scale_color_manual(values = Col_EvStatus) +
+  
+  # SET LINE TYPE FOR BS_ORIGINAL
+  scale_linetype_manual(values = L_BS) +
+  
+  # SET COLORS FOR QTcat (POINT FILL COLORS)
+  scale_fill_manual(values = Col_QTcat) +
+  
+  # MANUALLY SET SHAPES FOR EACH AnimalID
+  scale_shape_manual(values = c(21, 24)) +
+  
+  # CUSTOM LEGEND TITLES
+  labs(shape = "AnimalID", fill = "QTcat", color = "Eviction Status") +
+  
+  # OVERRIDE POINT LEGEND TO SHOW THE CORRECT COLORS
+  guides(
+    fill = guide_legend(override.aes = list(shape = 21, color = "black")),
+    color = guide_legend(order = 1),
+    linetype = guide_legend(order = 2),
+    shape = guide_legend(order = 3)
+  ) +
+  
+    #Y LABELS
+    ylab(label = paste(Hormones_ToPlot[j],"conc [ng/ml]", sep = " ")) +
+  
+  #SET MARGIN TO MINIMUM
+  theme(plot.margin = margin(0, 0, 0, 0)) +
+        
+  # MINIMAL THEME
+  theme_minimal()+
+  
+  #REMOVE LEGEND FROM INDIVIDUAL GRAPH
+  theme(legend.position = "none") 
+
+
+  #ADD VLINE PAIRING
+  p <- p +
+    geom_vline(xintercept = 0, colour = "black", linetype = "dashed", size = 1)
+
+  #ADD VLINE EVICTION
+if(length(Eviction) >= 0){
+  p <- p +
+    geom_vline(xintercept = Eviction, colour = "red", linetype = "dashed", size = 1)}
+
+#PLACE FIGURE IN LIST 
+List[[j]] <- p
+    
+    
+}
+
+
+#EXTRACT LEGEND OF FIRST GRAPH
+Legend <- cowplot::get_legend(List[[1]] + theme(legend.position = "right"))
+
+
+#STACK GRAPH VERTICALLY 
+Stacked <- cowplot::plot_grid(List[[1]], List[[2]], ncol = 1)
+
+
+#COMBINE GRAPH AND LEGENDS
+Stacked_WithL <- cowplot::plot_grid(Stacked, Legend, ncol = 2, rel_widths = c(9, 1))
+
+#DRAW TITLE
+Title <- cowplot::ggdraw() + 
+  cowplot::draw_label(
+    paste(Info$Treatment,":",Info$Sampling_Cat,":",Info$ExperimentalGroup,":",Info$OriginalGroup,":",Info$QueenType,":",Info$ExperimentalUnit, sep = ""), 
+    fontface = 'bold', 
+    size = 12, 
+    hjust = 0.5
+  )
+
+#COMBINE FINAL GRAPH WITH THE TITLE
+FinalPlot <- cowplot::plot_grid(Title, Stacked_WithL, ncol = 1, rel_heights = c(0.1, 1))
+  
+#CREATE AN EDITABLE PLOT 
+FinalPlot_Ed <- rvg::dml(ggobj = FinalPlot)
+
+#ADD GRAPH TO PP
+ppt <- ppt %>% 
+  # ADD SLIDE 
+  add_slide(layout = "Title and Content", master = "Office Theme") %>%
+  # ADD BOXPLOT
+  ph_with(value = FinalPlot_Ed,
+          location = ph_location(left = 0, top = 0, width = 10, height = 7.5))
+  
+}
+
+#PRINT PDF 
+ppt <-   ppt %>% 
+  print(paste("PostPair_RPreF_",HormonesGroup_ToPlot[h],".pptx",sep = ""))
+
+}
+
+
+```
+
+
+##Slow conception 
+
+For this graph it may be better to show queen and helper on separate graph 
+
+
+```{r ToPlot}
+
+#FIRST PARTURITION IN GROUP 
+FirstParturition_Evictor <- DC_Parturition_Info_PostPair %>% 
+  #ADD EVICTION STATUS 
+  left_join(., DC_Info_F %>% 
+              select(AnimalID,
+                     EvictionStatus)) %>% 
+  #RETAIN EVICTOR 
+  filter(EvictionStatus == "Evictor") %>% 
+  rename(ExperimentalGroup = ParturitionColony) %>% 
+  group_by(ExperimentalGroup) %>% 
+  slice_min(ParturitionDate) %>% 
+  ungroup() %>% 
+  rename(FirstPartDate_Evictor_Group = ParturitionDate) %>%
+  select(ExperimentalGroup,
+         FirstPartDate_Evictor_Group,
+         AnimalID) %>%
+  #ADD MAX DATE OF URINE TO BE SHOWN 
+  mutate(MaxDate = FirstPartDate_Evictor_Group - 60)
+View(FirstParturition)
+
+
+ToPlot <- Data_ToPlot %>% 
+  #ADD FIRST PARTURITION IN GROUP
+  left_join(., FirstParturition_Evictor %>% 
+              select(ExperimentalGroup, MaxDate)) %>% 
+  #RETAIN SAMPLES AFTER ISOLATION 
+  filter(UrineIsol_DayDiff > 1) %>% 
+  #RETAIN SAMPLES < MAX DATE 
+  filter(UrineDate <= MaxDate) %>% 
+  #RETAIN SAMPLE OF CORRECT CATEGORY
+  filter(Sampling_Cat == "Slow_Conc") %>% 
+  #ARRANGE
+  #To match what is needed for graph
+  arrange(Treatment, 
+          QueenType,
+          Sampling_Cat,
+          ExperimentalUnit)
+
+View(ToPlot)
+
+
+
+```
+
+```{r vector}
+
+#Vector of individuals to loop over
+Group_ToPlot <- DC_Info_F %>% 
+  filter(Sampling_Cat == "Slow_Conc") %>% 
+  #ARRANGE
+  arrange(Treatment,Sampling_Cat,QueenType) %>%
+  #DISTINCT
+  distinct(ExperimentalGroup) %>% 
+  pull() 
+
+
+```
+
+I plot the queen and the helpers alone and the helpers with queen 
+
+
+```{r Post Isol}
+
+#FOR EACH GROUP OF HORMONE 
+#I want one ppt
+for(h in (1:length(HormonesGroup_ToPlot))) {
+
+#CREATE POWER POINT
+ppt <-
+  # Load template
+  read_pptx()
+
+#VECTOR OF HORMONES TO PLOT 
+#would probably be better to have it straight as a vector
+Hormones_ToPlot <- ToPlot %>%
+  filter(HormoneGroup == HormonesGroup_ToPlot[h]) %>% 
+  arrange(Hormone) %>% 
+  distinct(Hormone) %>% 
+  pull()
+
+
+#LOOP OVER EACH EXP GROUP
+for(i in (1: length(Group_ToPlot))) {
+  
+#CREATE LIST
+List <- vector(mode = "list")
+
+
+#EVICTION INFO
+#Relative to isolation
+Eviction <- DC_Info_F %>% 
+  filter(Sampling_Cat == "Slow_Conc") %>% 
+  distinct(ExperimentalGroup,
+           EvictionPairingDayDiff) %>% 
+  rename(Eviction = EvictionPairingDayDiff) %>% 
+  filter(ExperimentalGroup == Group_ToPlot[i]) %>% 
+  pull(Eviction)
+
+
+#TITLE INFO
+Info <- DC_Info_F %>%
+    filter(ExperimentalGroup == Group_ToPlot[i]) %>%
+    filter(Sampling_Cat == "Slow_Conc") %>% 
+    distinct(Sampling_Cat, ExperimentalGroup, OriginalGroup,Treatment,QueenType, ExperimentalUnit, LastOrGroupPartIsol_DayDiff)
+
+
+#LOOP OVER EACH HORMONES
+for(j in (1:length(Hormones_ToPlot))) {
+    
+p <- ggplot(ToPlot %>% 
+              filter(HormoneGroup == HormonesGroup_ToPlot[h], 
+                     ExperimentalGroup == Group_ToPlot[i], 
+                     Hormone == Hormones_ToPlot[j] 
+                     ,BS_Original == "Helper"
+                     ) 
+                     %>% 
+              arrange(Treatment, 
+                      QueenType), #Could be done in data 
+            aes(x = UrinePairing_DayDiff, y = Conc, group = AnimalID, 
+                linetype = BS_Original, fill = QTcat)) +
+  
+  # ADD LINE
+  geom_line(size = 1, aes(color = EvictionStatus)) +
+  
+  # ADD POINTS with shapes for each AnimalID and ensure correct fill and color in the legend
+  geom_point(size = 3, aes(shape = AnimalID), color = "black") +
+  
+  # ADD LABELS FOR UrineParturition_DayDiff
+  geom_text(aes(label = UrineParturition_DayDiff), 
+            vjust = -1, hjust = 0.5, size = 3, color = "black") +
+  
+  # SET COLORS FOR EVICTION STATUS (LINE COLORS)
+  scale_color_manual(values = Col_EvStatus) +
+  
+  # SET LINE TYPE FOR BS_ORIGINAL
+  scale_linetype_manual(values = L_BS) +
+  
+  # SET COLORS FOR QTcat (POINT FILL COLORS)
+  scale_fill_manual(values = Col_QTcat) +
+  
+  # MANUALLY SET SHAPES FOR EACH AnimalID
+  scale_shape_manual(values = c(21, 24)) +
+  
+  # CUSTOM LEGEND TITLES
+  labs(shape = "AnimalID", fill = "QTcat", color = "Eviction Status") +
+  
+  # OVERRIDE POINT LEGEND TO SHOW THE CORRECT COLORS
+  guides(
+    fill = guide_legend(override.aes = list(shape = 21, color = "black")),
+    color = guide_legend(order = 1),
+    linetype = guide_legend(order = 2),
+    shape = guide_legend(order = 3)
+  ) +
+  
+    #Y LABELS
+    ylab(label = paste(Hormones_ToPlot[j],"conc [ng/ml]", sep = " ")) +
+  
+  #SET MARGIN TO MINIMUM
+  theme(plot.margin = margin(0, 0, 0, 0)) +
+        
+  # MINIMAL THEME
+  theme_minimal()+
+  
+  #REMOVE LEGEND FROM INDIVIDUAL GRAPH
+  theme(legend.position = "none") 
+
+
+  #ADD VLINE PAIRING
+  p <- p +
+    geom_vline(xintercept = 0, colour = "black", linetype = "dashed", size = 1)
+
+  #ADD VLINE EVICTION
+if(length(Eviction) >= 0){
+  p <- p +
+    geom_vline(xintercept = Eviction, colour = "red", linetype = "dashed", size = 1)}
+
+#PLACE FIGURE IN LIST 
+List[[j]] <- p
+    
+    
+}
+
+
+#EXTRACT LEGEND OF FIRST GRAPH
+Legend <- cowplot::get_legend(List[[1]] + theme(legend.position = "right"))
+
+
+#STACK GRAPH VERTICALLY 
+Stacked <- cowplot::plot_grid(List[[1]], List[[2]], ncol = 1)
+
+
+#COMBINE GRAPH AND LEGENDS
+Stacked_WithL <- cowplot::plot_grid(Stacked, Legend, ncol = 2, rel_widths = c(9, 1))
+
+#DRAW TITLE
+Title <- cowplot::ggdraw() + 
+  cowplot::draw_label(
+    paste(Info$Treatment,":",Info$Sampling_Cat,":",Info$ExperimentalGroup,":",Info$OriginalGroup,":",Info$QueenType,":",Info$ExperimentalUnit, sep = ""), 
+    fontface = 'bold', 
+    size = 12, 
+    hjust = 0.5
+  )
+
+#COMBINE FINAL GRAPH WITH THE TITLE
+FinalPlot <- cowplot::plot_grid(Title, Stacked_WithL, ncol = 1, rel_heights = c(0.1, 1))
+  
+#CREATE AN EDITABLE PLOT 
+FinalPlot_Ed <- rvg::dml(ggobj = FinalPlot)
+
+#ADD GRAPH TO PP
+ppt <- ppt %>% 
+  # ADD SLIDE 
+  add_slide(layout = "Title and Content", master = "Office Theme") %>%
+  # ADD BOXPLOT
+  ph_with(value = FinalPlot_Ed,
+          location = ph_location(left = 0, top = 0, width = 10, height = 7.5))
+  
+}
+
+#PRINT PDF 
+ppt <-   ppt %>% 
+  print(paste("PostPair_SC_H",HormonesGroup_ToPlot[h],".pptx",sep = ""))
+
+}
+
+
+#SC stands for Slow_Conception
+#H stands for helper
+
+
+```
+
+
+```{r D21}
+
+#FOR EACH GROUP OF HORMONE 
+#I want one ppt
+for(h in (1:length(HormonesGroup_ToPlot))) {
+
+#CREATE POWER POINT
+ppt <-
+  # Load template
+  read_pptx()
+
+#VECTOR OF HORMONES TO PLOT 
+#would probably be better to have it straight as a vector
+Hormones_ToPlot <- ToPlot %>%
+  filter(HormoneGroup == HormonesGroup_ToPlot[h]) %>% 
+  arrange(Hormone) %>% 
+  distinct(Hormone) %>% 
+  pull()
+
+
+#LOOP OVER EACH EXP GROUP
+for(i in (1: length(Group_ToPlot))) {
+  
+#CREATE LIST
+List <- vector(mode = "list")
+
+
+#EVICTION INFO
+#Relative to isolation
+Eviction <- DC_Info_F %>% 
+  filter(Sampling_Cat == "Slow_Conc") %>% 
+  distinct(ExperimentalGroup,
+           EvictionPairingDayDiff) %>% 
+  rename(Eviction = EvictionPairingDayDiff) %>% 
+  filter(ExperimentalGroup == Group_ToPlot[i]) %>% 
+  pull(Eviction)
+
+
+#TITLE INFO
+Info <- DC_Info_F %>%
+    filter(ExperimentalGroup == Group_ToPlot[i]) %>%
+    filter(Sampling_Cat == "Slow_Conc") %>% 
+    distinct(Sampling_Cat, ExperimentalGroup, OriginalGroup,Treatment,QueenType, ExperimentalUnit, LastOrGroupPartIsol_DayDiff)
+
+
+#LOOP OVER EACH HORMONES
+for(j in (1:length(Hormones_ToPlot))) {
+    
+p <- ggplot(ToPlot %>% 
+              filter(HormoneGroup == HormonesGroup_ToPlot[h], 
+                     ExperimentalGroup == Group_ToPlot[i], 
+                     Hormone == Hormones_ToPlot[j] 
+                     ,BS_Original == "Helper"
+                     ,UrineEviction_DayDiff >= -21
+                     ) 
+                     %>% 
+              arrange(Treatment, 
+                      QueenType), #Could be done in data 
+            aes(x = UrinePairing_DayDiff, y = Conc, group = AnimalID, 
+                linetype = BS_Original, fill = QTcat)) +
+  
+  # ADD LINE
+  geom_line(size = 1, aes(color = EvictionStatus)) +
+  
+  # ADD POINTS with shapes for each AnimalID and ensure correct fill and color in the legend
+  geom_point(size = 3, aes(shape = AnimalID), color = "black") +
+  
+  # ADD LABELS FOR UrineParturition_DayDiff
+  geom_text(aes(label = UrineParturition_DayDiff), 
+            vjust = -1, hjust = 0.5, size = 3, color = "black") +
+  
+  # SET COLORS FOR EVICTION STATUS (LINE COLORS)
+  scale_color_manual(values = Col_EvStatus) +
+  
+  # SET LINE TYPE FOR BS_ORIGINAL
+  scale_linetype_manual(values = L_BS) +
+  
+  # SET COLORS FOR QTcat (POINT FILL COLORS)
+  scale_fill_manual(values = Col_QTcat) +
+  
+  # MANUALLY SET SHAPES FOR EACH AnimalID
+  scale_shape_manual(values = c(21, 24)) +
+  
+  # CUSTOM LEGEND TITLES
+  labs(shape = "AnimalID", fill = "QTcat", color = "Eviction Status") +
+  
+  # OVERRIDE POINT LEGEND TO SHOW THE CORRECT COLORS
+  guides(
+    fill = guide_legend(override.aes = list(shape = 21, color = "black")),
+    color = guide_legend(order = 1),
+    linetype = guide_legend(order = 2),
+    shape = guide_legend(order = 3)
+  ) +
+  
+    #Y LABELS
+    ylab(label = paste(Hormones_ToPlot[j],"conc [ng/ml]", sep = " ")) +
+  
+  #SET MARGIN TO MINIMUM
+  theme(plot.margin = margin(0, 0, 0, 0)) +
+        
+  # MINIMAL THEME
+  theme_minimal()+
+  
+  #REMOVE LEGEND FROM INDIVIDUAL GRAPH
+  theme(legend.position = "none") 
+
+  #ADD VLINE EVICTION
+if(length(Eviction) >= 0){
+  p <- p +
+    geom_vline(xintercept = Eviction, colour = "red", linetype = "dashed", size = 1)}
+
+#PLACE FIGURE IN LIST 
+List[[j]] <- p
+    
+    
+}
+
+
+#EXTRACT LEGEND OF FIRST GRAPH
+Legend <- cowplot::get_legend(List[[1]] + theme(legend.position = "right"))
+
+
+#STACK GRAPH VERTICALLY 
+Stacked <- cowplot::plot_grid(List[[1]], List[[2]], ncol = 1)
+
+
+#COMBINE GRAPH AND LEGENDS
+Stacked_WithL <- cowplot::plot_grid(Stacked, Legend, ncol = 2, rel_widths = c(9, 1))
+
+#DRAW TITLE
+Title <- cowplot::ggdraw() + 
+  cowplot::draw_label(
+    paste(Info$Treatment,":",Info$Sampling_Cat,":",Info$ExperimentalGroup,":",Info$OriginalGroup,":",Info$QueenType,":",Info$ExperimentalUnit, sep = ""), 
+    fontface = 'bold', 
+    size = 12, 
+    hjust = 0.5
+  )
+
+#COMBINE FINAL GRAPH WITH THE TITLE
+FinalPlot <- cowplot::plot_grid(Title, Stacked_WithL, ncol = 1, rel_heights = c(0.1, 1))
+  
+#CREATE AN EDITABLE PLOT 
+FinalPlot_Ed <- rvg::dml(ggobj = FinalPlot)
+
+#ADD GRAPH TO PP
+ppt <- ppt %>% 
+  # ADD SLIDE 
+  add_slide(layout = "Title and Content", master = "Office Theme") %>%
+  # ADD BOXPLOT
+  ph_with(value = FinalPlot_Ed,
+          location = ph_location(left = 0, top = 0, width = 10, height = 7.5))
+  
+}
+
+#PRINT PDF 
+ppt <-   ppt %>% 
+  print(paste("PostPair_SC_H_D21",HormonesGroup_ToPlot[h],".pptx",sep = ""))
+
+}
+
+
+#SC stands for Slow_Conception
+#H stands for helper
+#21PE stands for 21 days re-Eviction
+
+```
+
+
+Do breeders increase 
+
+```{r D21}
+
+#FOR EACH GROUP OF HORMONE 
+#I want one ppt
+for(h in (1:length(HormonesGroup_ToPlot))) {
+
+#CREATE POWER POINT
+ppt <-
+  # Load template
+  read_pptx()
+
+#VECTOR OF HORMONES TO PLOT 
+#would probably be better to have it straight as a vector
+Hormones_ToPlot <- ToPlot %>%
+  filter(HormoneGroup == HormonesGroup_ToPlot[h]) %>% 
+  arrange(Hormone) %>% 
+  distinct(Hormone) %>% 
+  pull()
+
+
+#LOOP OVER EACH EXP GROUP
+for(i in (1: length(Group_ToPlot))) {
+  
+#CREATE LIST
+List <- vector(mode = "list")
+
+
+#EVICTION INFO
+#Relative to isolation
+Eviction <- DC_Info_F %>% 
+  filter(Sampling_Cat == "Slow_Conc") %>% 
+  distinct(ExperimentalGroup,
+           EvictionPairingDayDiff) %>% 
+  rename(Eviction = EvictionPairingDayDiff) %>% 
+  filter(ExperimentalGroup == Group_ToPlot[i]) %>% 
+  pull(Eviction)
+
+
+#TITLE INFO
+Info <- DC_Info_F %>%
+    filter(ExperimentalGroup == Group_ToPlot[i]) %>%
+    filter(Sampling_Cat == "Slow_Conc") %>% 
+    distinct(Sampling_Cat, ExperimentalGroup, OriginalGroup,Treatment,QueenType, ExperimentalUnit, LastOrGroupPartIsol_DayDiff)
+
+
+#LOOP OVER EACH HORMONES
+for(j in (1:length(Hormones_ToPlot))) {
+    
+p <- ggplot(ToPlot %>% 
+              filter(HormoneGroup == HormonesGroup_ToPlot[h], 
+                     ExperimentalGroup == Group_ToPlot[i], 
+                     Hormone == Hormones_ToPlot[j] 
+                     ,BS_Original == "Helper"
+                     ,UrineEviction_DayDiff >= -21
+                     ) 
+                     %>% 
+              arrange(Treatment, 
+                      QueenType), #Could be done in data 
+            aes(x = UrinePairing_DayDiff, y = Conc, group = AnimalID, 
+                linetype = BS_Original, fill = QTcat)) +
+  
+  # ADD LINE
+  geom_line(size = 1, aes(color = EvictionStatus)) +
+  
+  # ADD POINTS with shapes for each AnimalID and ensure correct fill and color in the legend
+  geom_point(size = 3, aes(shape = AnimalID), color = "black") +
+  
+  # ADD LABELS FOR UrineParturition_DayDiff
+  geom_text(aes(label = UrineParturition_DayDiff), 
+            vjust = -1, hjust = 0.5, size = 3, color = "black") +
+  
+  # SET COLORS FOR EVICTION STATUS (LINE COLORS)
+  scale_color_manual(values = Col_EvStatus) +
+  
+  # SET LINE TYPE FOR BS_ORIGINAL
+  scale_linetype_manual(values = L_BS) +
+  
+  # SET COLORS FOR QTcat (POINT FILL COLORS)
+  scale_fill_manual(values = Col_QTcat) +
+  
+  # MANUALLY SET SHAPES FOR EACH AnimalID
+  scale_shape_manual(values = c(21, 24)) +
+  
+  # CUSTOM LEGEND TITLES
+  labs(shape = "AnimalID", fill = "QTcat", color = "Eviction Status") +
+  
+  # OVERRIDE POINT LEGEND TO SHOW THE CORRECT COLORS
+  guides(
+    fill = guide_legend(override.aes = list(shape = 21, color = "black")),
+    color = guide_legend(order = 1),
+    linetype = guide_legend(order = 2),
+    shape = guide_legend(order = 3)
+  ) +
+  
+    #Y LABELS
+    ylab(label = paste(Hormones_ToPlot[j],"conc [ng/ml]", sep = " ")) +
+  
+  #SET MARGIN TO MINIMUM
+  theme(plot.margin = margin(0, 0, 0, 0)) +
+        
+  # MINIMAL THEME
+  theme_minimal()+
+  
+  #REMOVE LEGEND FROM INDIVIDUAL GRAPH
+  theme(legend.position = "none") 
+
+  #ADD VLINE EVICTION
+if(length(Eviction) >= 0){
+  p <- p +
+    geom_vline(xintercept = Eviction, colour = "red", linetype = "dashed", size = 1)}
+
+#PLACE FIGURE IN LIST 
+List[[j]] <- p
+    
+    
+}
+
+
+#EXTRACT LEGEND OF FIRST GRAPH
+Legend <- cowplot::get_legend(List[[1]] + theme(legend.position = "right"))
+
+
+#STACK GRAPH VERTICALLY 
+Stacked <- cowplot::plot_grid(List[[1]], List[[2]], ncol = 1)
+
+
+#COMBINE GRAPH AND LEGENDS
+Stacked_WithL <- cowplot::plot_grid(Stacked, Legend, ncol = 2, rel_widths = c(9, 1))
+
+#DRAW TITLE
+Title <- cowplot::ggdraw() + 
+  cowplot::draw_label(
+    paste(Info$Treatment,":",Info$Sampling_Cat,":",Info$ExperimentalGroup,":",Info$OriginalGroup,":",Info$QueenType,":",Info$ExperimentalUnit, sep = ""), 
+    fontface = 'bold', 
+    size = 12, 
+    hjust = 0.5
+  )
+
+#COMBINE FINAL GRAPH WITH THE TITLE
+FinalPlot <- cowplot::plot_grid(Title, Stacked_WithL, ncol = 1, rel_heights = c(0.1, 1))
+  
+#CREATE AN EDITABLE PLOT 
+FinalPlot_Ed <- rvg::dml(ggobj = FinalPlot)
+
+#ADD GRAPH TO PP
+ppt <- ppt %>% 
+  # ADD SLIDE 
+  add_slide(layout = "Title and Content", master = "Office Theme") %>%
+  # ADD BOXPLOT
+  ph_with(value = FinalPlot_Ed,
+          location = ph_location(left = 0, top = 0, width = 10, height = 7.5))
+  
+}
+
+#PRINT PDF 
+ppt <-   ppt %>% 
+  print(paste("PostPair_SC_H_D21",HormonesGroup_ToPlot[h],".pptx",sep = ""))
+
+}
+
+
+```
+
+
+##Slow Pre First 
+
+As for Slow Conc. Runs on helpers only and on both animals. Also run from isolation and from 3 weeks prior to pairing
+
+
+```{r Data}
+
+#FIRST PARTURITION IN GROUP 
+FirstParturition_Evictor <- DC_Parturition_Info_PostPair %>% 
+  #ADD EVICTION STATUS 
+  left_join(., DC_Info_F %>% 
+              select(AnimalID,
+                     EvictionStatus)) %>% 
+  #RETAIN EVICTOR 
+  filter(EvictionStatus == "Evictor") %>% 
+  rename(ExperimentalGroup = ParturitionColony) %>% 
+  group_by(ExperimentalGroup) %>% 
+  slice_min(ParturitionDate) %>% 
+  ungroup() %>% 
+  rename(FirstPartDate_Evictor_Group = ParturitionDate) %>%
+  select(ExperimentalGroup,
+         FirstPartDate_Evictor_Group,
+         AnimalID) %>%
+  #ADD MAX DATE OF URINE TO BE SHOWN 
+  mutate(MaxDate = FirstPartDate_Evictor_Group - 60)
+View(FirstParturition)
+
+
+ToPlot <- Data_ToPlot %>% 
+  #ADD FIRST PARTURITION IN GROUP
+  left_join(., FirstParturition_Evictor %>% 
+              select(ExperimentalGroup, MaxDate)) %>% 
+  #RETAIN SAMPLES AFTER ISOLATION 
+  filter(UrineIsol_DayDiff > 1) %>% 
+  #RETAIN SAMPLES < MAX DATE 
+  filter(UrineDate <= MaxDate | ExperimentalGroup == "WicklowWolf") %>% 
+  #RETAIN SAMPLE OF CORRECT CATEGORY
+  filter(Sampling_Cat == "Slow_PreFirst" | ExperimentalGroup == "WicklowWolf") %>% 
+  #ARRANGE
+  #To match what is needed for graph
+  arrange(Treatment, 
+          QueenType,
+          Sampling_Cat,
+          ExperimentalUnit)
+
+View(ToPlot)
+
+
+
+```
+
+```{r vector}
+
+#Vector of individuals to loop over
+Group_ToPlot <- DC_Info_F %>% 
+  filter(Sampling_Cat == "Slow_PreFirst" | ExperimentalGroup == "WicklowWolf") %>% 
+  #ARRANGE
+  arrange(Treatment,Sampling_Cat,QueenType) %>%
+  #DISTINCT
+  distinct(ExperimentalGroup) %>% 
+  pull() 
+
+
+```
+
+
+Run all post isolation samples on helpers and on both animals  
+
+
+```{r Post Isol}
+
+#FOR EACH GROUP OF HORMONE 
+#I want one ppt
+for(h in (1:length(HormonesGroup_ToPlot))) {
+
+#CREATE POWER POINT
+ppt <-
+  # Load template
+  read_pptx()
+
+#VECTOR OF HORMONES TO PLOT 
+#would probably be better to have it straight as a vector
+Hormones_ToPlot <- ToPlot %>%
+  filter(HormoneGroup == HormonesGroup_ToPlot[h]) %>% 
+  arrange(Hormone) %>% 
+  distinct(Hormone) %>% 
+  pull()
+
+
+#LOOP OVER EACH EXP GROUP
+for(i in (1: length(Group_ToPlot))) {
+  
+#CREATE LIST
+List <- vector(mode = "list")
+
+
+#EVICTION INFO
+#Relative to isolation
+Eviction <- DC_Info_F %>% 
+  filter(Sampling_Cat == "Slow_PreFirst" | ExperimentalGroup == "WicklowWolf") %>% 
+  distinct(ExperimentalGroup,
+           EvictionPairingDayDiff) %>% 
+  rename(Eviction = EvictionPairingDayDiff) %>% 
+  filter(ExperimentalGroup == Group_ToPlot[i]) %>% 
+  pull(Eviction)
+
+
+#TITLE INFO
+Info <- DC_Info_F %>%
+    filter(ExperimentalGroup == Group_ToPlot[i]) %>%
+    filter(Sampling_Cat == "Slow_PreFirst" | ExperimentalGroup == "WicklowWolf") %>% 
+    distinct(Sampling_Cat, ExperimentalGroup, OriginalGroup,Treatment,QueenType, ExperimentalUnit, LastOrGroupPartIsol_DayDiff)
+
+
+#LOOP OVER EACH HORMONES
+for(j in (1:length(Hormones_ToPlot))) {
+    
+p <- ggplot(ToPlot %>% 
+              filter(HormoneGroup == HormonesGroup_ToPlot[h], 
+                     ExperimentalGroup == Group_ToPlot[i], 
+                     Hormone == Hormones_ToPlot[j]
+                     ,BS_Original == "Helper"
+                     ) %>% 
+              arrange(Treatment, 
+                      QueenType), #Could be done in data 
+            aes(x = UrinePairing_DayDiff, y = Conc, group = AnimalID, 
+                linetype = BS_Original, fill = QTcat)) +
+  
+  # ADD LINE
+  geom_line(size = 1, aes(color = EvictionStatus)) +
+  
+  # ADD POINTS with shapes for each AnimalID and ensure correct fill and color in the legend
+  geom_point(size = 3, aes(shape = AnimalID), color = "black") +
+  
+  # ADD LABELS FOR UrineParturition_DayDiff
+  geom_text(aes(label = UrineParturition_DayDiff), 
+            vjust = -1, hjust = 0.5, size = 3, color = "black") +
+  
+  # SET COLORS FOR EVICTION STATUS (LINE COLORS)
+  scale_color_manual(values = Col_EvStatus) +
+  
+  # SET LINE TYPE FOR BS_ORIGINAL
+  scale_linetype_manual(values = L_BS) +
+  
+  # SET COLORS FOR QTcat (POINT FILL COLORS)
+  scale_fill_manual(values = Col_QTcat) +
+  
+  # MANUALLY SET SHAPES FOR EACH AnimalID
+  scale_shape_manual(values = c(21, 24)) +
+  
+  # CUSTOM LEGEND TITLES
+  labs(shape = "AnimalID", fill = "QTcat", color = "Eviction Status") +
+  
+  # OVERRIDE POINT LEGEND TO SHOW THE CORRECT COLORS
+  guides(
+    fill = guide_legend(override.aes = list(shape = 21, color = "black")),
+    color = guide_legend(order = 1),
+    linetype = guide_legend(order = 2),
+    shape = guide_legend(order = 3)
+  ) +
+  
+    #Y LABELS
+    ylab(label = paste(Hormones_ToPlot[j],"conc [ng/ml]", sep = " ")) +
+  
+  #SET MARGIN TO MINIMUM
+  theme(plot.margin = margin(0, 0, 0, 0)) +
+        
+  # MINIMAL THEME
+  theme_minimal()+
+  
+  #REMOVE LEGEND FROM INDIVIDUAL GRAPH
+  theme(legend.position = "none") 
+
+
+  #ADD VLINE PAIRING
+  p <- p +
+    geom_vline(xintercept = 0, colour = "black", linetype = "dashed", size = 1)
+
+  #ADD VLINE EVICTION
+if(length(Eviction) >= 0){
+  p <- p +
+    geom_vline(xintercept = Eviction, colour = "red", linetype = "dashed", size = 1)}
+
+#PLACE FIGURE IN LIST 
+List[[j]] <- p
+    
+    
+}
+
+
+#EXTRACT LEGEND OF FIRST GRAPH
+Legend <- cowplot::get_legend(List[[1]] + theme(legend.position = "right"))
+
+
+#STACK GRAPH VERTICALLY 
+Stacked <- cowplot::plot_grid(List[[1]], List[[2]], ncol = 1)
+
+
+#COMBINE GRAPH AND LEGENDS
+Stacked_WithL <- cowplot::plot_grid(Stacked, Legend, ncol = 2, rel_widths = c(9, 1))
+
+#DRAW TITLE
+Title <- cowplot::ggdraw() + 
+  cowplot::draw_label(
+    paste(Info$Treatment,":",Info$Sampling_Cat,":",Info$ExperimentalGroup,":",Info$OriginalGroup,":",Info$QueenType,":",Info$ExperimentalUnit, sep = ""), 
+    fontface = 'bold', 
+    size = 12, 
+    hjust = 0.5
+  )
+
+#COMBINE FINAL GRAPH WITH THE TITLE
+FinalPlot <- cowplot::plot_grid(Title, Stacked_WithL, ncol = 1, rel_heights = c(0.1, 1))
+  
+#CREATE AN EDITABLE PLOT 
+FinalPlot_Ed <- rvg::dml(ggobj = FinalPlot)
+
+#ADD GRAPH TO PP
+ppt <- ppt %>% 
+  # ADD SLIDE 
+  add_slide(layout = "Title and Content", master = "Office Theme") %>%
+  # ADD BOXPLOT
+  ph_with(value = FinalPlot_Ed,
+          location = ph_location(left = 0, top = 0, width = 10, height = 7.5))
+  
+}
+
+#PRINT PDF 
+ppt <-   ppt %>% 
+  print(paste("PostPair_SPF_H",HormonesGroup_ToPlot[h],".pptx",sep = ""))
+
+}
+
+
+
+```
+
+
+Only retain samples collected within 21 days of eviction 
+
+```{r d-21}
+
+
+#FOR EACH GROUP OF HORMONE 
+#I want one ppt
+for(h in (1:length(HormonesGroup_ToPlot))) {
+
+#CREATE POWER POINT
+ppt <-
+  # Load template
+  read_pptx()
+
+#VECTOR OF HORMONES TO PLOT 
+#would probably be better to have it straight as a vector
+Hormones_ToPlot <- ToPlot %>%
+  filter(HormoneGroup == HormonesGroup_ToPlot[h]) %>% 
+  arrange(Hormone) %>% 
+  distinct(Hormone) %>% 
+  pull()
+
+
+#LOOP OVER EACH EXP GROUP
+for(i in (1: length(Group_ToPlot))) {
+  
+#CREATE LIST
+List <- vector(mode = "list")
+
+
+#EVICTION INFO
+#Relative to isolation
+Eviction <- DC_Info_F %>% 
+  filter(Sampling_Cat == "Slow_PreFirst"| ExperimentalGroup == "WicklowWolf") %>% 
+  distinct(ExperimentalGroup,
+           EvictionPairingDayDiff) %>% 
+  rename(Eviction = EvictionPairingDayDiff) %>% 
+  filter(ExperimentalGroup == Group_ToPlot[i]) %>% 
+  pull(Eviction)
+
+
+#TITLE INFO
+Info <- DC_Info_F %>%
+    filter(ExperimentalGroup == Group_ToPlot[i]) %>%
+    filter(Sampling_Cat == "Slow_PreFirst"| ExperimentalGroup == "WicklowWolf") %>% 
+    distinct(Sampling_Cat, ExperimentalGroup, OriginalGroup,Treatment,QueenType, ExperimentalUnit, LastOrGroupPartIsol_DayDiff)
+
+
+#LOOP OVER EACH HORMONES
+for(j in (1:length(Hormones_ToPlot))) {
+    
+p <- ggplot(ToPlot %>% 
+              filter(HormoneGroup == HormonesGroup_ToPlot[h], 
+                     ExperimentalGroup == Group_ToPlot[i], 
+                     Hormone == Hormones_ToPlot[j]
+                     ,BS_Original == "Helper"
+                     ,UrineEviction_DayDiff >= -21
+                     ) %>% 
+              arrange(Treatment, 
+                      QueenType), #Could be done in data 
+            aes(x = UrinePairing_DayDiff, y = Conc, group = AnimalID, 
+                linetype = BS_Original, fill = QTcat)) +
+  
+  # ADD LINE
+  geom_line(size = 1, aes(color = EvictionStatus)) +
+  
+  # ADD POINTS with shapes for each AnimalID and ensure correct fill and color in the legend
+  geom_point(size = 3, aes(shape = AnimalID), color = "black") +
+  
+  # ADD LABELS FOR UrineParturition_DayDiff
+  geom_text(aes(label = UrineParturition_DayDiff), 
+            vjust = -1, hjust = 0.5, size = 3, color = "black") +
+  
+  # SET COLORS FOR EVICTION STATUS (LINE COLORS)
+  scale_color_manual(values = Col_EvStatus) +
+  
+  # SET LINE TYPE FOR BS_ORIGINAL
+  scale_linetype_manual(values = L_BS) +
+  
+  # SET COLORS FOR QTcat (POINT FILL COLORS)
+  scale_fill_manual(values = Col_QTcat) +
+  
+  # MANUALLY SET SHAPES FOR EACH AnimalID
+  scale_shape_manual(values = c(21, 24)) +
+  
+  # CUSTOM LEGEND TITLES
+  labs(shape = "AnimalID", fill = "QTcat", color = "Eviction Status") +
+  
+  # OVERRIDE POINT LEGEND TO SHOW THE CORRECT COLORS
+  guides(
+    fill = guide_legend(override.aes = list(shape = 21, color = "black")),
+    color = guide_legend(order = 1),
+    linetype = guide_legend(order = 2),
+    shape = guide_legend(order = 3)
+  ) +
+  
+    #Y LABELS
+    ylab(label = paste(Hormones_ToPlot[j],"conc [ng/ml]", sep = " ")) +
+  
+  #SET MARGIN TO MINIMUM
+  theme(plot.margin = margin(0, 0, 0, 0)) +
+        
+  # MINIMAL THEME
+  theme_minimal()+
+  
+  #REMOVE LEGEND FROM INDIVIDUAL GRAPH
+  theme(legend.position = "none") 
+
+  #ADD VLINE EVICTION
+if(length(Eviction) >= 0){
+  p <- p +
+    geom_vline(xintercept = Eviction, colour = "red", linetype = "dashed", size = 1)}
+
+#PLACE FIGURE IN LIST 
+List[[j]] <- p
+    
+    
+}
+
+
+#EXTRACT LEGEND OF FIRST GRAPH
+Legend <- cowplot::get_legend(List[[1]] + theme(legend.position = "right"))
+
+
+#STACK GRAPH VERTICALLY 
+Stacked <- cowplot::plot_grid(List[[1]], List[[2]], ncol = 1)
+
+
+#COMBINE GRAPH AND LEGENDS
+Stacked_WithL <- cowplot::plot_grid(Stacked, Legend, ncol = 2, rel_widths = c(9, 1))
+
+#DRAW TITLE
+Title <- cowplot::ggdraw() + 
+  cowplot::draw_label(
+    paste(Info$Treatment,":",Info$Sampling_Cat,":",Info$ExperimentalGroup,":",Info$OriginalGroup,":",Info$QueenType,":",Info$ExperimentalUnit, sep = ""), 
+    fontface = 'bold', 
+    size = 12, 
+    hjust = 0.5
+  )
+
+#COMBINE FINAL GRAPH WITH THE TITLE
+FinalPlot <- cowplot::plot_grid(Title, Stacked_WithL, ncol = 1, rel_heights = c(0.1, 1))
+  
+#CREATE AN EDITABLE PLOT 
+FinalPlot_Ed <- rvg::dml(ggobj = FinalPlot)
+
+#ADD GRAPH TO PP
+ppt <- ppt %>% 
+  # ADD SLIDE 
+  add_slide(layout = "Title and Content", master = "Office Theme") %>%
+  # ADD BOXPLOT
+  ph_with(value = FinalPlot_Ed,
+          location = ph_location(left = 0, top = 0, width = 10, height = 7.5))
+  
+}
+
+#PRINT PDF 
+ppt <-   ppt %>% 
+  print(paste("PostPair_SPF_H_D21_",HormonesGroup_ToPlot[h],".pptx",sep = ""))
+
+}
+
+
+
+```
+
+
+Only retain samples collected within 40 days post pairing (so that I can see all queen first gestation) 
+
+```{r dPP 21}
+
+
+#FOR EACH GROUP OF HORMONE 
+#I want one ppt
+for(h in (1:length(HormonesGroup_ToPlot))) {
+
+#CREATE POWER POINT
+ppt <-
+  # Load template
+  read_pptx()
+
+#VECTOR OF HORMONES TO PLOT 
+#would probably be better to have it straight as a vector
+Hormones_ToPlot <- ToPlot %>%
+  filter(HormoneGroup == HormonesGroup_ToPlot[h]) %>% 
+  arrange(Hormone) %>% 
+  distinct(Hormone) %>% 
+  pull()
+
+
+#LOOP OVER EACH EXP GROUP
+for(i in (1: length(Group_ToPlot))) {
+  
+#CREATE LIST
+List <- vector(mode = "list")
+
+
+#TITLE INFO
+Info <- DC_Info_F %>%
+    filter(ExperimentalGroup == Group_ToPlot[i]) %>%
+    filter(Sampling_Cat == "Slow_PreFirst"| ExperimentalGroup == "WicklowWolf") %>% 
+    distinct(Sampling_Cat, ExperimentalGroup, OriginalGroup,Treatment,QueenType, ExperimentalUnit, LastOrGroupPartIsol_DayDiff)
+
+
+#LOOP OVER EACH HORMONES
+for(j in (1:length(Hormones_ToPlot))) {
+    
+p <- ggplot(ToPlot %>% 
+              filter(HormoneGroup == HormonesGroup_ToPlot[h], 
+                     ExperimentalGroup == Group_ToPlot[i], 
+                     Hormone == Hormones_ToPlot[j]
+                     ,BS_Original == "Helper"
+                     ,UrinePairing_DayDiff <= 40
+                     ) %>% 
+              arrange(Treatment, 
+                      QueenType), #Could be done in data 
+            aes(x = UrinePairing_DayDiff, y = Conc, group = AnimalID, 
+                linetype = BS_Original, fill = QTcat)) +
+  
+  # ADD LINE
+  geom_line(size = 1, aes(color = EvictionStatus)) +
+  
+  # ADD POINTS with shapes for each AnimalID and ensure correct fill and color in the legend
+  geom_point(size = 3, aes(shape = AnimalID), color = "black") +
+  
+  # ADD LABELS FOR UrineParturition_DayDiff
+  geom_text(aes(label = UrineParturition_DayDiff), 
+            vjust = -1, hjust = 0.5, size = 3, color = "black") +
+  
+  # SET COLORS FOR EVICTION STATUS (LINE COLORS)
+  scale_color_manual(values = Col_EvStatus) +
+  
+  # SET LINE TYPE FOR BS_ORIGINAL
+  scale_linetype_manual(values = L_BS) +
+  
+  # SET COLORS FOR QTcat (POINT FILL COLORS)
+  scale_fill_manual(values = Col_QTcat) +
+  
+  # MANUALLY SET SHAPES FOR EACH AnimalID
+  scale_shape_manual(values = c(21, 24)) +
+  
+  # CUSTOM LEGEND TITLES
+  labs(shape = "AnimalID", fill = "QTcat", color = "Eviction Status") +
+  
+  # OVERRIDE POINT LEGEND TO SHOW THE CORRECT COLORS
+  guides(
+    fill = guide_legend(override.aes = list(shape = 21, color = "black")),
+    color = guide_legend(order = 1),
+    linetype = guide_legend(order = 2),
+    shape = guide_legend(order = 3)
+  ) +
+  
+    #Y LABELS
+    ylab(label = paste(Hormones_ToPlot[j],"conc [ng/ml]", sep = " ")) +
+  
+  #SET MARGIN TO MINIMUM
+  theme(plot.margin = margin(0, 0, 0, 0)) +
+        
+  # MINIMAL THEME
+  theme_minimal()+
+  
+  #REMOVE LEGEND FROM INDIVIDUAL GRAPH
+  theme(legend.position = "none") 
+
+
+  #ADD VLINE PAIRING
+  p <- p +
+    geom_vline(xintercept = 0, colour = "black", linetype = "dashed", size = 1)
+
+#PLACE FIGURE IN LIST 
+List[[j]] <- p
+    
+    
+}
+
+
+#EXTRACT LEGEND OF FIRST GRAPH
+Legend <- cowplot::get_legend(List[[1]] + theme(legend.position = "right"))
+
+
+#STACK GRAPH VERTICALLY 
+Stacked <- cowplot::plot_grid(List[[1]], List[[2]], ncol = 1)
+
+
+#COMBINE GRAPH AND LEGENDS
+Stacked_WithL <- cowplot::plot_grid(Stacked, Legend, ncol = 2, rel_widths = c(9, 1))
+
+#DRAW TITLE
+Title <- cowplot::ggdraw() + 
+  cowplot::draw_label(
+    paste(Info$Treatment,":",Info$Sampling_Cat,":",Info$ExperimentalGroup,":",Info$OriginalGroup,":",Info$QueenType,":",Info$ExperimentalUnit, sep = ""), 
+    fontface = 'bold', 
+    size = 12, 
+    hjust = 0.5
+  )
+
+#COMBINE FINAL GRAPH WITH THE TITLE
+FinalPlot <- cowplot::plot_grid(Title, Stacked_WithL, ncol = 1, rel_heights = c(0.1, 1))
+  
+#CREATE AN EDITABLE PLOT 
+FinalPlot_Ed <- rvg::dml(ggobj = FinalPlot)
+
+#ADD GRAPH TO PP
+ppt <- ppt %>% 
+  # ADD SLIDE 
+  add_slide(layout = "Title and Content", master = "Office Theme") %>%
+  # ADD BOXPLOT
+  ph_with(value = FinalPlot_Ed,
+          location = ph_location(left = 0, top = 0, width = 10, height = 7.5))
+  
+}
+
+#PRINT PDF 
+ppt <-   ppt %>% 
+  print(paste("PostPair_SPF_H_DPP40_",HormonesGroup_ToPlot[h],".pptx",sep = ""))
+
+}
+
+
+
+```
+
+
+##All other categories
+
+For the remaining categories, I can perhaps plot all of them at once to inform what must be changed to refine graph.
+
+In Devils Peak (No eviction), each female produced one litter only (why)
+
+In Lion it goes BEF006, 36, 36, BEF006
+
+In Tusker true example of co-breeding with successive alternance. Eviction occurred after 817 days. It is almost two years longer than the next longest eviction, so definitely an outlier.
+
+My assumption is that for all 3 group, there should be samples until conception of first successfull litter
+
+
+```{r Litter Info}
+
+View(Litter_Info %>% 
+  filter(ParturitionColony %in% c("Lion","DevilsPeak","Tusker")) %>% 
+  select(ParturitionColony,
+         AnimalID,
+         ParturitionDate,
+         IndividualParturitionCount_Colony,
+         ColonyParturitionCount_Colony) %>% 
+  arrange(ParturitionColony,
+          ParturitionDate))
+
+```
+
+
+In Tusker the eviction occurred long after the samples were exported and thus I will have no data on this.
+
+```{r Ev Delay}
+
+View(DC_Info_F %>% 
+  filter(ExperimentalGroup %in% c("Lion", "Tusker", "DevilsPeak")) %>% 
+  select(ExperimentalGroup,
+         AnimalID,
+         BS_Original,
+         EvictionStatus,
+         EvictionDate, 
+         EvictionPairingDayDiff))
+
+```
+
+
+I will first here try to plot all samples
+
+```{r Data}
+
+View(Data_ToPlot)
+
+ToPlot <- Data_ToPlot %>% 
+  #RETAIN SAMPLES AFTER ISOLATION 
+  filter(UrineIsol_DayDiff > 1) %>% 
+  #RETAIN SAMPLE OF CORRECT CATEGORY
+  filter(ExperimentalGroup %in% c("Lion", "Tusker", "DevilsPeak")) %>% 
+  #ARRANGE
+  #To match what is needed for graph
+  arrange(Treatment, 
+          QueenType,
+          Sampling_Cat,
+          ExperimentalUnit)
+
+View(ToPlot)
+
+
+
+```
+
+```{r vector}
+
+#Vector of individuals to loop over
+Group_ToPlot <- DC_Info_F %>% 
+  filter(ExperimentalGroup %in% c("Lion", "Tusker", "DevilsPeak")) %>% 
+  #ARRANGE
+  arrange(Treatment,Sampling_Cat,QueenType) %>%
+  #DISTINCT
+  distinct(ExperimentalGroup) %>% 
+  pull() 
+
+
+```
+
+
+I will start by plotting the two animals in the same graph and see whether there is any need for more 
+
+
+```{r}
+
+#FOR EACH GROUP OF HORMONE 
+#I want one ppt
+for(h in (1:length(HormonesGroup_ToPlot))) {
+
+#CREATE POWER POINT
+ppt <-
+  # Load template
+  read_pptx()
+
+#VECTOR OF HORMONES TO PLOT 
+#would probably be better to have it straight as a vector
+Hormones_ToPlot <- ToPlot %>%
+  filter(HormoneGroup == HormonesGroup_ToPlot[h]) %>% 
+  arrange(Hormone) %>% 
+  distinct(Hormone) %>% 
+  pull()
+
+
+#LOOP OVER EACH EXP GROUP
+for(i in (1: length(Group_ToPlot))) {
+  
+#CREATE LIST
+List <- vector(mode = "list")
+
+
+#TITLE INFO
+Info <- DC_Info_F %>%
+    filter(ExperimentalGroup == Group_ToPlot[i]) %>%
+    filter(ExperimentalGroup %in% c("Lion", "Tusker", "DevilsPeak")) %>% 
+    distinct(Sampling_Cat, ExperimentalGroup, OriginalGroup,Treatment,QueenType, ExperimentalUnit, LastOrGroupPartIsol_DayDiff)
+
+
+#LOOP OVER EACH HORMONES
+for(j in (1:length(Hormones_ToPlot))) {
+    
+p <- ggplot(ToPlot %>% 
+              filter(HormoneGroup == HormonesGroup_ToPlot[h], 
+                     ExperimentalGroup == Group_ToPlot[i], 
+                     Hormone == Hormones_ToPlot[j]
+                     #,BS_Original == "Helper"
+                     #,UrineEviction_DayDiff >= -21
+                     ) %>% 
+              arrange(Treatment, 
+                      QueenType), #Could be done in data 
+            aes(x = UrinePairing_DayDiff, y = Conc, group = AnimalID, 
+                linetype = BS_Original, fill = QTcat)) +
+  
+  # ADD LINE
+  geom_line(size = 1, aes(color = EvictionStatus)) +
+  
+  # ADD POINTS with shapes for each AnimalID and ensure correct fill and color in the legend
+  geom_point(size = 3, aes(shape = AnimalID), color = "black") +
+  
+  # ADD LABELS FOR UrineParturition_DayDiff
+  geom_text(aes(label = UrineParturition_DayDiff), 
+            vjust = -1, hjust = 0.5, size = 3, color = "black") +
+  
+  # SET COLORS FOR EVICTION STATUS (LINE COLORS)
+  scale_color_manual(values = Col_EvStatus) +
+  
+  # SET LINE TYPE FOR BS_ORIGINAL
+  scale_linetype_manual(values = L_BS) +
+  
+  # SET COLORS FOR QTcat (POINT FILL COLORS)
+  scale_fill_manual(values = Col_QTcat) +
+  
+  # MANUALLY SET SHAPES FOR EACH AnimalID
+  scale_shape_manual(values = c(21, 24)) +
+  
+  # CUSTOM LEGEND TITLES
+  labs(shape = "AnimalID", fill = "QTcat", color = "Eviction Status") +
+  
+  # OVERRIDE POINT LEGEND TO SHOW THE CORRECT COLORS
+  guides(
+    fill = guide_legend(override.aes = list(shape = 21, color = "black")),
+    color = guide_legend(order = 1),
+    linetype = guide_legend(order = 2),
+    shape = guide_legend(order = 3)
+  ) +
+  
+    #Y LABELS
+    ylab(label = paste(Hormones_ToPlot[j],"conc [ng/ml]", sep = " ")) +
+  
+  #SET MARGIN TO MINIMUM
+  theme(plot.margin = margin(0, 0, 0, 0)) +
+        
+  # MINIMAL THEME
+  theme_minimal()+
+  
+  #REMOVE LEGEND FROM INDIVIDUAL GRAPH
+  theme(legend.position = "none") 
+
+
+  #ADD VLINE PAIRING
+  p <- p +
+    geom_vline(xintercept = 0, colour = "black", linetype = "dashed", size = 1)
+
+#PLACE FIGURE IN LIST 
+List[[j]] <- p
+    
+    
+}
+
+
+#EXTRACT LEGEND OF FIRST GRAPH
+Legend <- cowplot::get_legend(List[[1]] + theme(legend.position = "right"))
+
+
+#STACK GRAPH VERTICALLY 
+Stacked <- cowplot::plot_grid(List[[1]], List[[2]], ncol = 1)
+
+
+#COMBINE GRAPH AND LEGENDS
+Stacked_WithL <- cowplot::plot_grid(Stacked, Legend, ncol = 2, rel_widths = c(9, 1))
+
+#DRAW TITLE
+Title <- cowplot::ggdraw() + 
+  cowplot::draw_label(
+    paste(Info$Treatment,":",Info$Sampling_Cat,":",Info$ExperimentalGroup,":",Info$OriginalGroup,":",Info$QueenType,":",Info$ExperimentalUnit, sep = ""), 
+    fontface = 'bold', 
+    size = 12, 
+    hjust = 0.5
+  )
+
+#COMBINE FINAL GRAPH WITH THE TITLE
+FinalPlot <- cowplot::plot_grid(Title, Stacked_WithL, ncol = 1, rel_heights = c(0.1, 1))
+  
+#CREATE AN EDITABLE PLOT 
+FinalPlot_Ed <- rvg::dml(ggobj = FinalPlot)
+
+#ADD GRAPH TO PP
+ppt <- ppt %>% 
+  # ADD SLIDE 
+  add_slide(layout = "Title and Content", master = "Office Theme") %>%
+  # ADD BOXPLOT
+  ph_with(value = FinalPlot_Ed,
+          location = ph_location(left = 0, top = 0, width = 10, height = 7.5))
+  
+}
+
+#PRINT PDF 
+ppt <-   ppt %>% 
+  print(paste("PostPair_None_",HormonesGroup_ToPlot[h],".pptx",sep = ""))
+
+}
+
+View(DC_Info)
+```
+
+
+## Group - Isol - Eviction 
+
+```{r Data PP10}
+
+unique(Data_ToPlot$EvictionSpeed)
+
+#DataSet until 10 days post-pairing
+
+ToPlot_Post <- Data_ToPlot %>% 
+  
+  #RETAIN UNTIL 10 DAYS POST PAIRING
+  filter(EvictionSpeed == "Rapid" & UrinePairing_DayDiff <= 21 |
+           EvictionSpeed %in% c("Slow","None") & UrinePairing_DayDiff <= 10 ) %>% 
+  
+  #RETAIN PRE-EVICTION SAMPLE
+  filter(UrineEviction_DayDiff <= 0 | is.na(UrineEviction_DayDiff)) %>% 
+  
+  #ADD ANIMAL CATEGORY
+  mutate(AnimalCat = case_when(Treatment == "Queen" & BS_Original == "Breeder" ~ "Queen",
+                             Treatment == "Queen" & BS_Original == "Helper" ~ "HelperQ",    
+                             Treatment == "Sub" ~ "HelperS")) %>% 
+  
+  #RELEVEL ANIMAL CATEGORY
+  mutate(AnimalCat = fct_relevel(AnimalCat,"Queen","HelperQ","HelperS")) %>% 
+  
+  
+  #ADD EVICTOR CAT
+  mutate(EvictCat = case_when(BS_Original == "Breeder" & EvictionStatus == "Evictor" ~ "QT_Qor",
+                                BS_Original == "Helper" & EvictionStatus == "Evictee" & Treatment == "Queen" ~ "QT_Hee",
+                                BS_Original == "Breeder" & EvictionStatus == "Evictee" ~ "QT_Qee",
+                                BS_Original == "Helper" & EvictionStatus == "Evictor" & Treatment == "Queen" ~ "QT_Hor",
+                                BS_Original == "Helper" & EvictionStatus == "Evictor" & Treatment == "Sub" ~ "HT_Hor",
+                                BS_Original == "Helper" & EvictionStatus == "Evictee" & Treatment == "Sub" ~ "HT_Hee")) %>% 
+  
+  #RELEVEL ANIMAL CATEGORY
+  mutate(EvictCat = fct_relevel(EvictCat,"QT_Qor","QT_Hee","QT_Hor","QT_Qee","HT_Hor","HT_Hee")) %>%
+  
+  
+  #ADD GROUP EVICTION CAT 
+  mutate(EvictCat_Gr = case_when(BS_Original == "Breeder" & EvictionStatus == "Evictor" | BS_Original == "Helper" & EvictionStatus == "Evictee" & Treatment == "Queen" ~ "Qor",
+                                 BS_Original == "Breeder" & EvictionStatus == "Evictee" | BS_Original == "Helper" & EvictionStatus == "Evictor" & Treatment == "Queen" ~ "HorQ",
+                                 Treatment == "Sub" & EvictionStatus != "InGroup" ~ "Hor",
+                                 TRUE ~ "NoOr")) %>% 
+  
+  
+  #RELEVEL GROUP EVICTION CAT
+  mutate(EvictCat_Gr = fct_relevel(EvictCat_Gr,"Qor","HorQ","Hor","NoOr")) %>% 
+  
+  
+  
+  #ASSIGN SAMPLING PERIOD FOR PLOTTING
+  mutate(SamplingPeriod = case_when(
+    
+    #GROUP
+    UrineIsol_DayDiff <= 0 ~ "Group",
+    
+    #ISOLATION
+    UrineIsol_DayDiff > 0 & UrinePairing_DayDiff <= 0 ~ "Pair",
+    
+    #POST PAIRING 
+    UrinePairing_DayDiff > 0 ~ "Male",
+    
+    #POST PAIRING 
+    TRUE ~ "ToCheck")) %>% 
+  
+  #RELEVEL SAMPLING PERIOD
+  mutate(SamplingPeriod = fct_relevel(SamplingPeriod,"Group", "Pair", "Male")) %>% 
+  
+  #MANUALLY REMOVE OUTLIERS
+  filter(!(Hormone == "T" & Conc >400))
+
+
+View(ToPlot_Post)
+
+View(DC_Info_F %>% 
+       filter(Sampling_Cat == "Rapid_Conc",
+              Treatment == "Sub"))
+
+    
+
+```
+
+Prepare data beyond 10 days post pairing 
+
+I need a separation between rapid and slow eviction in the queen treatment
+
+```{r Data All}
+
+names(ToPlot_Post)
+
+ToPlot_Post <- Data_ToPlot %>% 
+  
+  #RETAIN PRE EVICTION SAMPLE 
+  #AT THE MOMENT ONE ONLY  KEEPS SAMPLE PRIOR TO EVICTION OR THE DAY OFF
+  filter(UrineEviction_DayDiff <= 0) %>% 
+  
+  #ASSIGN SAMPLING PERIOD 
+  mutate(SamplingPeriod = case_when(
+    
+    #GROUP
+    UrineIsol_DayDiff <= 0 ~ "Group",
+    
+    #ISOLATION
+    UrineIsol_DayDiff > 0 & UrinePairing_DayDiff <= 0 ~ "Pair",
+    
+    #PAIRING - EVICTION FOR RAPID 
+    #SO FAR ALL SAMPLES POST PAIRING CONSIDERED AS EVICTION 
+    #FOR DARLINGB THOUGH COULD SEPARATE AS EV 21 DAYS POST-PAIR
+    UrinePairing_DayDiff > 0 & UrineEviction_DayDiff <= 0  & EvictionSpeed == "Rapid" <= 0 ~ "Eviction",
+    
+    #PAIRING SLOW
+    UrinePairing_DayDiff > 0 & UrinePairing_DayDiff <= 10  & EvictionSpeed == "Slow" <= 0 ~ "Pairing",
+    
+    #EVICTION SLOW
+    UrineEviction_DayDiff <= 0 & UrineEviction_DayDiff >= -8 & EvictionSpeed == "Slow" <= -8 ~ "Eviction",
+    
+    #IN BETWEEN SLOW 
+    EvictionSpeed == "Slow" & UrineEviction_DayDiff > 10 & UrineEviction_DayDiff < 10  ~ "NoEv",
+    
+    #NO EVICTION 
+    EvictionSpeed == "None" ~ "NoEv",
+    
+    #REST
+    TRUE ~ "NotUsed")) 
+  
+  
+
+```
+
+
+```{r Plot}
+# Get unique hormones to plot
+Hormones_ToPlot <- ToPlot_Post %>% 
+  distinct(Hormone) %>% 
+  filter(!Hormone %in% c("E2", "P4", "DHEA")) %>% 
+  pull()
+
+
+Hormones_ToPlot <- ToPlot_Post %>% 
+  distinct(Hormone) %>% 
+  filter(Hormone %in% c("E2", "P4", "DHEA")) %>% 
+  pull()
+
+# Create a list to store plots
+plot_list <- list()
+
+for(i in 1:length(Hormones_ToPlot)) {
+  # Filter data
+  filtered_data <- ToPlot_Post %>% 
+    filter(Hormone == Hormones_ToPlot[i]) %>%
+    mutate(x_position = as.numeric(interaction(SamplingPeriod, EvictCat_Gr)))
+  
+  # Function to calculate slopes
+  calc_slopes <- function(data, period1, period2) {
+    data %>%
+      filter(SamplingPeriod %in% c(period1, period2)) %>%
+      group_by(EvictCat_Gr, EvictionStatus) %>%
+      summarise(
+        slope = coef(lm(Conc ~ x_position))[2],
+        intercept = coef(lm(Conc ~ x_position))[1],
+        x_start = min(x_position),
+        x_end = max(x_position),
+        .groups = "drop"
+      )
+  }
+  
+  # Calculate slopes
+  slopes_group_pair <- calc_slopes(filtered_data, "Group", "Pair")
+  slopes_pair_male <- calc_slopes(filtered_data, "Pair", "Male")
+  
+  # Combine slopes
+  all_slopes <- bind_rows(slopes_group_pair, slopes_pair_male)
+  
+  # Plot the data
+  p <- ggplot(filtered_data, aes(x = interaction(SamplingPeriod, EvictCat_Gr), y = Conc)) +
+    # Add jittered points colored by EvictionStatus
+    geom_point(aes(color = EvictionStatus, shape = EvictionSpeed), 
+               position = position_jitter(width = 0.2), 
+               size = 1.5, alpha = 0.5) +
+    
+    # Add segmented regression lines
+    geom_segment(data = all_slopes, 
+                 aes(x = x_start, xend = x_end, 
+                     y = intercept + slope * x_start, 
+                     yend = intercept + slope * x_end, 
+                     color = EvictionStatus),
+                 size = 0.8) +
+    
+    # Color by EvictionStatus
+    scale_color_brewer(palette = "Set1") +
+    
+    # Remove x-axis label
+    xlab("Sampling Period - EvictCat_Gr") +
+    
+    # Dynamically rename y-axis label
+    ylab(paste(Hormones_ToPlot[i], "Conc", sep = " ")) +
+    
+    # Theme minimal
+    theme_minimal() +
+    
+    # Add legend for shapes
+    scale_shape_manual(values = c(16, 15, 17)) +  # 16: circle, 15: square, 17: triangle
+    
+    # Rotate x-axis labels for better readability
+    theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+    
+    # Add a title
+    ggtitle(paste("Hormone Concentration:", Hormones_ToPlot[i]))
+  
+  # Store the plot in the list
+  plot_list[[i]] <- p
+}
+
+# Print all plots
+for(i in 1:length(plot_list)) {
+  print(plot_list[[i]])
+}
+
+```
+
+
+
+
+## 1 month post pairing 
+
+## 1 month pre-isolation
+
+
+
+
+
+
+
+
+
+
+
+
+#The next part is to be moved in the sample selection files
+
+Selection of samples to assess whether females ovulate after the removal of the breeding male. 
+
+I should finalize the selection only after I have visualized all profile til pairing
+
+```{r BF ovulation sample}
+names(DC_Info_F)
+#Distribution of delay between last parturition in original group and isolation 
+View(DC_Info_F %>% 
+       filter(!is.na(KingRemovalDate)) %>% 
+       select(AnimalID, 
+              BS_Original,
+              ExperimentalGroup, 
+              Treatment,
+              KingRemovalDate,
+              LastOrGroupPartIsol_DayDiff) %>% 
+       arrange(desc(LastOrGroupPartIsol_DayDiff)))
+#Between 19 and 591 days 
+
+
+#Retain all samples after last parturition and after removal of king 
+BF_Ovulation <- DC_Info_Urine_F %>%
+  #ADD DAY DIFF ISOL LAST PARTURITION
+  left_join(., DC_Info_F %>% 
+              select(AnimalID,
+                     LastOrGroupPartIsol_DayDiff)) %>% 
+  #RETAIN BREEDER TREATMENT
+  filter(BS_Original == "Breeder") %>% 
+  #RETAIN SAMPLES AFTER KING REMOVAL 
+  filter(UrineKingRemoval_DayDiff > 0) %>%
+  #RETAIN SAMPLES AFTER LAST PARTURION 
+  filter(UrineLastParturitionOirginalGroup_DayDiff > 0) %>% 
+  #RETAIN SAMPLES BEFORE PAIRING
+  filter(UrinePairing_DayDiff < 0) %>% 
+  #ARRANGE
+  arrange(Sampling_Cat,
+          desc(LastOrGroupPartIsol_DayDiff),
+          ExperimentalGroup) %>% 
+  #SELECT 
+  select(Sampling_Cat, 
+         ExperimentalGroup,
+         AnimalID,
+         LastOrGroupPartIsol_DayDiff,
+         UrineParturition_DayDiff,
+         UrineKingRemoval_DayDiff,
+         UrineLastParturitionOirginalGroup_DayDiff,
+         UrineIsol_DayDiff,
+         UrinePairing_DayDiff,
+         UrineNumber)
+
+View(BF_Ovulation)
+
+```
+
+
+
+
+
+

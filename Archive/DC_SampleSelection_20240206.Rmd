@@ -1,0 +1,105 @@
+---
+title: "Untitled"
+output: html_document
+date: "2024-02-06"
+---
+
+
+
+```{r Data Prep}
+
+DCS_Info <- DC_Info_F %>% 
+left_join(., SamplingCat %>% 
+            select(-BS_Original))
+View(DC_Info)
+
+
+#Group
+#Treatment
+#Eviction category
+#Animal Original BS
+#
+#Days to pairing to know if pre or post pairing 
+#Days to eviction 
+#Days to Parturition
+
+ToSelect <- DC_Info_Urine_F %>% 
+  #ADD SAMPLING CATEGORY
+  left_join(., SamplingCat %>% 
+            select(-BS_Original)) %>% 
+  #SELECT 
+  select(ExperimentalGroup,
+         Treatment,
+         SamplingCat,
+         BS_Original,
+         EvictionStatus,
+         UrinePairing_DayDiff,
+         UrineEviction_DayDiff,
+         UrineNextParturition_DayDiff)
+
+names(DC_Info_Urine_F)
+
+names(SamplingCat)
+
+View()
+```
+
+
+#Category XX: No eviction 
+
+There are 3 groups in which there has been no eviction.
+
+24) Devils Peak (Sub)
+25) Lions (Sub)
+26) Tusker (Q)
+
+What could they be used for? 
+
+i) Control for absence of conflict 
+ii) Timing of reproductive activation of each female
+
+
+24) Devils Peak: Sub treatment, no co-breeding 
+
+In Devils Peak, DVF048 conceived approximately 30 days post pairing and produced a litter 118. She died 229 days after pairing. 353 days after pairing the remaining DVF061 subordinate conceived a litter to which she gave birth 441 days post pairing. It is unknown whether DVF061 has activated her reproductive axis before she conceived her first litter and thus whether she was ovulating while DVF048 was reproductively active
+
+???Was DF061 ovulating while DVF048 was breeding? 
+???
+
+```{r Devils Peak}
+
+DP <- DCS_Info %>% 
+  filter(ExperimentalGroup == "DevilsPeak")
+
+
+LI_DP <- DevilsPeak <- Litter_Info %>% 
+  filter(AnimalID %in% c("DVF048", "DVF061"))
+
+View(tbl)
+
+
+```
+
+
+24) Lions: Sub treatment, no co-breeding
+
+BEF006 activated 8 days after pairing and gave birth to her first litter 96 days after pairing. Then the second subordinate BEF036 gave birth 
+
+```{r Lions}
+
+Lion <- DCS_Info %>% 
+  filter(ExperimentalGroup == "Lion")
+
+
+LI_Li <- DevilsPeak <- Litter_Info %>% 
+  filter(AnimalID %in% c("BEF006", "BEF036"))
+
+View(LI_Li)
+
+```
+
+
+```{r Tusker}
+
+```
+

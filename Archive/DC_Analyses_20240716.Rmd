@@ -1,0 +1,567 @@
+---
+title: "Untitled"
+output: html_document
+date: "2024-07-16"
+editor_options: 
+  chunk_output_type: console
+---
+
+#Aim 
+
+Codes for DC paper 
+
+
+#General
+
+1) I probably want to extract additional info on the queens reproductive output like tenure length, number of pups produced, number of litter produced to assess whether it affects their competitive abilities. That could be a subsequent and more detailed analysis for why they lose.
+
+2) Predictors of Queen competitive abilities (when fighting a helper)
+
+3) Predictors of helper competitive abilities (when fighting a helper)
+
+
+#Library
+
+```{r}
+
+library(tidyverse)
+
+#Modelling 
+library(glmmTMB)
+library(brms)
+
+#Posthoc comparisons
+library(emmeans)
+library(ggeffects)
+
+```
+
+
+#Directory
+
+```{r}
+
+DC_dir <- "C:/Users/Philippe/Dropbox/PhD_20150515/Research projects/DMR_HelperBreedingOpp/DC/DC_Analyses"
+
+```
+
+
+
+#Data 
+
+```{csv}
+
+#DC info
+DC_Info_F <- read.csv("DC_Info_F_20240710.csv") %>% 
+  
+  #REFORMAT DATE
+    mutate(BirthDate = ymd(BirthDate),
+         PairingDate = ymd(PairingDate),
+         KingRemovalDate = ymd(KingRemovalDate),
+         OriginalGroup_LastParturitionDate = ymd(OriginalGroup_LastParturitionDate),
+         IsolationDate = ymd(IsolationDate),
+         DeathDate = ymd(DeathDate),
+         LastDate = ymd(LastDate),
+         FirstDCConceptionDate = ymd(FirstDCConceptionDate),
+         FirstDCParturitionDate = ymd(FirstDCParturitionDate),
+         EvictionDate = ymd(EvictionDate))
+
+
+#Relevant weight
+DC_ClosestWeight <- read.csv("DC_ClosestWeight_20240710.csv") %>% 
+  mutate(Date = ymd(Date)) %>% 
+  rename(WeightDate = Date)
+
+
+#Urine info 
+#check what info is there
+DC_Info_Urine_F <- read.csv("DC_Info_Urine_F_20240710.csv") %>%
+  rename(SampleID = UrineNumber) %>% 
+  mutate(urineDate = ymd(UrineDate))
+
+
+
+#Hormone concentration 
+DC_Conc_All <-read.csv("DC_Conc_All_20240710.csv")
+
+```
+
+
+#Methods 
+
+##Sample Size 
+
+```{r}
+
+#Number of pairs
+SampleSize <- DC_Info_F %>% 
+  group_by(Treatment) %>% 
+  summarize(SampleSize = n_distinct(ExperimentalGroup)) %>% 
+  ungroup()
+View(SampleSize)
+#12 Queens
+#13 Sub 
+
+
+#Number of groups from which females were taken
+OriginalGroup_F <- DC_Info_F %>% 
+  summarize(SampleSize = n_distinct(OriginalGroup))
+View(OriginalGroup_F)
+#17 groups
+
+
+#Duration of isolation period 
+IsolationDuration <-  DC_Info_F %>% 
+  mutate(IsolDur = PairingDate - IsolationDate) %>% 
+  distinct(ExperimentalGroup,.keep_all = TRUE) %>% 
+  summarise(IsolMean = mean(IsolDur),
+            SD = sd(IsolDur))
+View(IsolationDuration)
+
+
+#Number of groups where queen was removed 
+KingRemovalCount <- DC_Info_F %>% 
+  filter(!is.na(KingRemovalDate)) %>% 
+  distinct(OriginalGroup,.keep_all = TRUE)
+View(KingRemovalCount)
+#10 groups meaning two groups already had their king removed
+
+
+View(DC_Info_F %>% 
+       filter(Treatment == "Queen",
+              is.na(KingRemovalDate)) %>% 
+       distinct(ExperimentalGroup,.keep_all = TRUE))
+#In Ruru and the Maags the king was already absent
+
+
+#Number of groups from which males were taken 
+
+```
+
+
+
+##Experimental design
+
+
+###Age
+
+Age of males and females at the beginning of the experiments (isolation)
+
+```{r Summary}
+
+#Age female
+Age_Female <- DC_Info_F %>% 
+  summarize(Min = min(Age/365.25, na.rm = T),
+         Max = max(Age/365.25, na.rm = T),
+         Median = median(Age/365.25, na.rm = T),
+         Avg = mean(Age/365.25, na.rm = T),
+         FirstQuartile = quantile(Age/365.25, probs = 0.25, na.rm = T)) %>% 
+  ungroup()
+View(Age_Female)
+
+#Age of females by status
+Age_Female_ByBS <- DC_Info_F %>% 
+  group_by(BS_Original) %>% 
+  summarize(Min = min(Age/365.25, na.rm = T),
+         Max = max(Age/365.25, na.rm = T),
+         Median = median(Age/365.25, na.rm = T),
+         Avg = mean(Age/365.25, na.rm = T),
+         FirstQuartile = quantile(Age/365.25, probs = 0.25, na.rm = T)) %>% 
+  ungroup()
+View(Age_Female)
+
+
+#Age of females by status and treatment
+Age_Female_ByBS <- DC_Info_F %>% 
+  group_by(BS_Original, Treatment) %>% 
+  summarize(Min = min(Age/365.25, na.rm = T),
+         Max = max(Age/365.25, na.rm = T),
+         Median = median(Age/365.25, na.rm = T),
+         Avg = mean(Age/365.25, na.rm = T),
+         FirstQuartile = quantile(Age/365.25, probs = 0.25, na.rm = T)) %>% 
+  ungroup()
+
+
+#Age of males
+
+
+
+```
+
+
+There is a trend for females to be older in the breeder treatment than in the non-breeder treatment
+
+```{r Abs Treatment}
+
+LM_Age <- lm(as.integer(Age/365.25) ~ Treatment, 
+              data = DC_Info_F)
+summary(LM_Age)
+#There is a trend for females to be older in the queen treatment. It certainly is driven by the queens 
+
+```
+
+
+The age difference within pair is significantly greater in the breeder treatment than in the non-breeder treatment 
+
+```{r Relative Treatment}
+
+LM_AgeDiff <- lm(as.integer(AgeDiff/365.25) ~ Treatment, 
+              data = DC_Info_F %>% 
+                filter(AgeDiff_Cat == "Older"))
+summary(LM_AgeDiff)
+#There is a super significant difference in Age 
+
+```
+
+
+Breeding females are significantly older than paired daughters and females from the non-breeder treatment.
+
+There are no differences in age between sub across treatments
+
+
+```{r B/H}
+
+#Model
+LM_Age_BS <- lm(as.integer(Age/365.25) ~ BS_PlotCategory, 
+              data = DC_Info_F)
+summary(LM_Age_BS)
+
+
+#Post hoc comparison
+emm <- emmeans(LM_Age_BS, ~ BS_PlotCategory)
+#Specify the contrast wanted
+contrast(emm, method = list("Sub_Q - Sub_S" = c(0, 1, -1)))
+
+```
+
+
+```{r Plot}
+
+#By treatment
+ggplot(DC_Info_F,
+       aes(x=BS_PlotCategory,y=Age)) + 
+  
+  #ADD BOXPLOT
+  geom_boxplot(outlier.shape = NA) +
+  
+  #ADD POINTS 
+  geom_jitter(width = 0.3, height = 0, size = 2.5, aes(col = BS_Original)) +
+
+  theme_classic()
+
+```
+
+
+### BM 
+
+There were no significant difference in BM at the start of the experiment across treatments
+
+I guess one alternative would be to use all weights rather than just weight at a specific date. 
+
+Also just check in data prep whether isolation weight and pairing weight had any constraints on whether was taken before or after. 
+
+```{r Abs Isol}
+
+#At isolation 
+#Already moved into analyses (No model validation done yet)
+LM_BMIsol <- lm(Weight ~ Treatment, 
+              data = ClosestWeight_Milestone %>% 
+                filter(DateType == "Isolation"))
+summary(LM_BMIsol)
+
+```
+
+
+```{r Abs Pairing}
+
+#At pairing
+#Already moved into analyses (No model validation done yet)
+LM_BMPairing <- lm(Weight ~ Treatment, 
+              data = ClosestWeight_Milestone %>% 
+                filter(DateType == "Pairing")) 
+summary(LM_BMPairing)
+
+
+```
+
+There is no difference in body-mass difference within pair across treatment 
+```{r Relative isol}
+
+#At isolation 
+LM_BMDiff_Isol <- lm(WeightDiff ~ Treatment, 
+              data = WeightDiff %>% 
+                filter(DateType == "Isolation",
+                       WeightDiff_Cat == "Heavier"))
+summary(LM_BMDiff_Isol)
+#No significant difference
+names(WeightDiff)
+
+
+```
+
+
+```{r Relative pairing}
+
+#At isolation 
+LM_BMDiff_Pair <- lm(WeightDiff ~ Treatment, 
+              data = WeightDiff %>% 
+                filter(DateType == "Pairing",
+                       WeightDiff_Cat == "Heavier"))
+summary(LM_BMDiff_Pair)
+#No significant difference
+
+```
+
+Despite the lack of significant differences in body mass between queen and helpers, helpers were heavier than the animals they were paired with in 9/12 cases at isolation
+
+i) Chouffe: NBF was 3 grams heavier 
+ii) BitBurger: NBF was 8 grams heavier
+iii) Leffe: NBF was 4g heavier at isolation, same at pairing, lighter at eviction.
+
+```{r Plot}
+
+
+#Heavier as focal 
+ggplot(Heavier %>% 
+         filter(DateType == "Isolation"),
+       aes(x=Treatment,y=WeightDiff)) + 
+  
+  #ADD BOXPLOT
+  geom_boxplot(outlier.shape = NA) +
+  
+  #ADD POINTS 
+  geom_jitter(width = 0.3, height = 0, size = 2.5, aes(col=BS_Original)) +
+
+  theme_classic()
+#At isolation 3 helpers heavier than queen
+#Model suggests the difference is not significant though I have not done model validation on it
+
+```
+
+
+All of them eventually evicted the queen, despite Leffe getting much lighter
+
+However this number goes up to 5 at eviction 
+
+i) Chouffe: 4 grams heavier => evictor
+ii) BitBurger: 15 grams heavier => evictor
+iii) Tusker: 27 grams heavier => evictor 
+iv) Guiness: 32 grams heavier => evictor 
+v) Corona: 4 grams heavier => evictor 
+
+
+```{r Plot}
+
+#Sub heavier than queen at isolation 
+View(HeavierIsol %>% 
+       filter(Treatment == "Queen",
+              Isolation_HeavierRef == 1, 
+              BS_Original == "Helper"))
+#There are 3 females sub that are heavier at isolation than queen 
+
+
+#Sub heavier at queen at eviction 
+View(WeightDiff %>% 
+       filter(Treatment == "Queen",
+              BS_Original == "Helper",
+              DateType == "Eviction",
+              WeightDiff_Cat == "Heavier"))
+
+
+```
+
+There are no differences in body mass between queen and helpers  from the queen and the sub treatment  
+
+```{r B/H Isol}
+
+#Are queen heavier than all other females?
+LM_BMIsol_QueenSub <- lm(Weight ~ BS_PlotCategory, 
+              data = ClosestWeight_Milestone %>% 
+                filter(DateType == "Isolation"))
+summary(LM_BMIsol_QueenSub)
+
+
+#Post hoc comparison
+emm <- emmeans(LM_BMIsol_QueenSub, ~ BS_PlotCategory)
+#Specify the contrast wanted
+contrast(emm, method = list("Sub_Q - Sub_S" = c(0, 1, -1)))
+
+
+
+```
+
+
+```{r B/H pairing}
+
+LM_BMPair_QueenSub <- lm(Weight ~ BS_PlotCategory, 
+              data = ClosestWeight_Milestone %>% 
+                filter(DateType == "Pairing"))
+summary(LM_BMPair_QueenSub)
+
+
+emm <- emmeans(LM_BMPair_QueenSub, ~ BS_PlotCategory)
+#Specify the contrast wanted
+contrast(emm, method = list("Sub_Q - Sub_S" = c(0, 1, -1)))
+
+```
+
+
+###BM-Age correlation 
+
+One wants to know whether there are any correlation between BM and age 
+
+
+###Delta BM - Delta Age correlation 
+
+One wants to know whether there are any correlation between differences in BM and differences in ages
+
+#Occurences of eviction
+
+There weer eviction in 23/25 groups. No eviction in DP and Lion, both from the sub treatment 
+
+Thus there were 11/13 eviction in Sub and 12/12 in queen treatment 
+
+```{r}
+
+#Groups without eviction
+View(DC_Info_F %>% 
+       filter(EvictionStatus == "InGroup"))
+#Lion and DP do not have eviction
+
+```
+
+
+Use Firth logistic regression or brms due to separation of data. Code available in DC_DataExploration. Copy and paste once a decision has been made
+
+
+
+#Prob of winning
+
+
+##All data
+
+In the NBT, heavier helper at eviction have a 82% chance of victory. 9 wins and 2 losses
+
+In the BT heavier helper at eviction have a 100% chance of victory. 5 wins
+
+In the BT heavier queen at eviction have a 28.5% chance of vitory. 5 lossess and 2 wins 
+
+The 3 helpers that were heavier than queens (Chouffe, Bitburger, Leffe) at pairing eventually evicted the queen (Note that Leffe was lighter at eviction). The 5 helpers that were heavier than queens at eviction were evictor (Chouffe, Bitburger, Tusker, Guiness, Corona). 
+
+
+```{r Descriptive}
+
+#How many queens were heavier at eviction
+Eviction_BMdiff_BreederSum <- WeightDiff %>% 
+       filter(BS_Original == "Breeder") %>% 
+       group_by(DateType, EvictionStatus, WeightDiff_Cat) %>% 
+       summarize(Count = n()) %>% 
+       ungroup() %>% 
+       arrange(DateType,
+               EvictionStatus,
+               WeightDiff_Cat)
+View(Eviction_BMdiff_BreederSum)
+#7 queens heavier (H lighter) => 2 evictor, 5 evictees => 28% chance of winning 
+#5 queens lighter (H heavier) => all evicted 
+
+
+#Likelihood to win if you are heavier at eviction
+Eviction_Heavier_WinProb <- WeightDiff %>% 
+       filter(WeightDiff_Cat == "Heavier",
+              DateType == "Eviction") %>% 
+       group_by(Treatment, BS_Original) %>% 
+       summarize(Win = sum(EvictionStatus == "Evictor"),
+                 Lose = sum(EvictionStatus == "Evictee")) %>% 
+       ungroup() %>% 
+  mutate(ProbWin = Win/ (Win+Lose))
+View(Eviction_Heavier_WinProb)
+
+
+#What are the two sub that lost despite being heavier
+HeavierEvictee_NBT <- WeightDiff %>% 
+       filter(Treatment == "Sub",
+              DateType == "Eviction",
+              EvictionStatus == "Evictee") 
+View(HeavierEvictee_NBT)
+
+View(WeightDiff)
+
+```
+
+
+For the model, I am planning to use the heavier animals as reference
+
+```{r Data}
+
+#Heavier as Reference
+Heavier_Winp_Plot <- WeightDiff %>% 
+  #RETAIN HEAVIER OR SAME 
+  filter(WeightDiff_Cat %in% c("Same", "Heavier")) %>% 
+  #REMOVE NO EVICTION GROUP
+  #ADD Model CAT
+  mutate(BM_MCat = case_when(Treatment == "Sub" ~ "HH",
+                             Treatment == "Queen" & BS_Original == "Helper" ~ "HQ",
+                             Treatment == "Queen" & BS_Original == "Breeder" ~ "QH"))
+
+
+
+
+#Heavier as Reference
+View(WeightDiff %>% 
+       filter(EvictionStatus == "InGroup"))
+```
+
+
+```{r Plot}
+
+#Isolation
+HeavierI_Eviction_Plot <- ggplot(Heavier_Winp_Plot %>% 
+                                   filter(DateType == "Isolation"),
+       aes(x=BM_MCat,y=WeightDiff)) + 
+  
+  #ADD BOXPLOT
+  geom_boxplot(outlier.shape = NA) +
+  
+  #ADD POINTS 
+  geom_jitter(width = 0.3, height = 0, size = 2.5, aes(col=EvictionStatus)) +
+
+  theme_classic()
+#At isolation 3 helpers heavier than queen
+#Model suggests the difference is not significant though I have not done model validation on it
+
+
+#Pairing
+
+
+#Eviction
+
+
+
+
+
+
+```
+
+
+
+probwin ~ Dyad Type (3 levels S-S / S-Q / Q-S) fixing for the heavier animals 
+
+Questions:
+1) How to incorporate age info 
+2) Can we use delat BM as continuous rather than binary? 
+```{r Models}
+
+probwin ~ Dyad Type 
+
+```
+
+
+
+##NBT 
+
+
+##BT
+
+
+
+
